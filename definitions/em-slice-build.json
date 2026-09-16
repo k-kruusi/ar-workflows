@@ -1,0 +1,107 @@
+{
+  "id": "em-slice-build",
+  "name": "EM slice build → verify → CROSS-MODEL review → revise → final gate → notify",
+  "description": "Experience-memory slice builder with generator≠evaluator review. A coder agent builds one slice of packages/experience-memory IN-TREE (confined to that directory), core:exec runs tsc+vitest, a REVIEWER ON A DIFFERENT RUNTIME (default grok, fresh session) adversarially reviews the diff, its file:line citations are anchor-checked, the coder (resumed) addresses findings + any test failures, a final core:exec gate re-runs, and agent:notify delivers the outcome. Params: task, agent, reviewerRuntime (default \"grok\"). The coder does NOT commit — the dispatcher verifies and safe-commits after the run. Review verdicts are ADVISORY: the mechanical gate (tsc+vitest rerun) is the only pass/fail; the human/dispatcher arbitrates at the slice boundary (no single LLM is a clean grader gate — commit 873fab61).",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are building a slice of the experience-memory package in THIS repository. You may create and edit files ONLY under packages/experience-memory/ — do not touch any other path, do not commit, do not run git commands beyond read-only status/diff.\n\n=== TASK ===\n{{params.task}}\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (file reads, JSON parsing of untrusted transcripts): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, or optional chaining on known-present values.\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success.\n- Real edge cases: handle defensively AND document why; speculative guards: remove.\n- Surgical edits: match the existing Slice-1 style (scent headers, ESM .js import suffixes, pure functions).\n\nWhen done, reply with a short summary: files created, key design decisions, any deviations from the spec and WHY.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Coder, fresh session. Builds the slice confined to packages/experience-memory; returns sessionId for resume."
+      }
+    },
+    {
+      "id": "verify",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "cd packages/experience-memory && npx tsc --noEmit && npx vitest run",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Mechanical gate: typecheck + full test suite. Non-zero exit is a RESULT (ok:false), not a node failure."
+      }
+    },
+    {
+      "id": "review",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "{{params.reviewerRuntime}}",
+        "prompt": "You are an independent, adversarial reviewer ON A DIFFERENT MODEL than the coder — your value is a structurally different blind spot, not a second opinion from the same weights. Another agent just built a slice of packages/experience-memory in THIS repository:\n\n=== TASK ===\n{{params.task}}\n\nThe mechanical gate (tsc --noEmit && vitest run) exited {{nodes.verify.result.exitCode}}.\n\nScope yourself to packages/experience-memory/. Find the new/changed files (git status --porcelain -- packages/experience-memory; read untracked files directly). Judge, skeptically and concretely:\n1. TASK FIDELITY — does the code actually implement the spec, or a plausible-looking approximation?\n2. HONESTY INVARIANTS — this package's reason to exist is provenance discipline: mining MUST throw without mechanical proof, the gate MUST re-derive (not trust) recorded deltas, the store MUST reject tampered chains, retrieval MUST read promoted-only. Look for silent fallbacks, trusted-not-verified inputs, laundered aggregates, quiet empty results.\n3. PURITY — align/diagnose/gate must be I/O-free and clock-free; only parse/store/measure touch fs.\n4. DISCIPLINE — ?? on invariant paths, swallowed errors, speculative try/catch, asserts without WHY-messages.\n\nDo NOT relitigate decisions the task spec itself pins (those are settled); DO flag any place the code diverges from the spec's intent.\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT. If REJECT, list each concrete problem with file:line and exactly what must change. Cite only lines you actually opened.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": {
+        "description": "Cross-model reviewer — FRESH session on a different runtime. Advisory verdict; anchor-checked citations."
+      }
+    },
+    {
+      "id": "anchor_check",
+      "type": "review:anchor-check",
+      "timeoutMs": 30000,
+      "params": {
+        "text": "{{nodes.review.result.reply}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Validate reviewer file:line citations against cwd; unresolvable ones annotated [UNVERIFIED CITATION: ...]."
+      }
+    },
+    {
+      "id": "revise",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "prompt": "Two inputs:\n\n(1) The mechanical gate ran `npx tsc --noEmit && npx vitest run` in packages/experience-memory. exit code: {{nodes.verify.result.exitCode}}\n=== STDOUT (tail) ===\n{{nodes.verify.result.stdout}}\n=== STDERR (tail) ===\n{{nodes.verify.result.stderr}}\n\n(2) An independent cross-model reviewer assessed your work:\n=== REVIEW ===\n{{nodes.anchor_check.result.annotatedText}}\nAny citation marked [UNVERIFIED CITATION: ...] could not be resolved against the tree — treat those with skepticism while weighing the finding on its merits. The review is ADVISORY: address every finding that is real (fix it), and for any finding you judge wrong, say WHY in one line (reviewer context is thinner than yours). Do not relitigate spec-pinned decisions the reviewer failed to notice were pinned.\n\nIf the gate is green AND the review APPROVED (or its findings are all non-issues): reply 'VERIFIED-GREEN' plus one line. Change nothing.\nOtherwise: fix everything real (still confined to packages/experience-memory/, still no commits), then summarize what changed and why.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Coder --resumed. Fixes gate failures + real review findings; rebuts wrong ones in one line each."
+      }
+    },
+    {
+      "id": "verify_2",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "cd packages/experience-memory && npx tsc --noEmit && npx vitest run",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Final mechanical gate after revision — the only pass/fail that counts."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "🔧 EM slice build finished (cross-model reviewed).\n\n=== CODER SUMMARY ===\n{{nodes.work.result.reply}}\n\n=== REVIEW ({{params.reviewerRuntime}}) ===\n{{nodes.anchor_check.result.annotatedText}}\n\n=== REVISE ===\n{{nodes.revise.result.reply}}\n\n=== FINAL GATE (exit {{nodes.verify_2.result.exitCode}}) ===\n{{nodes.verify_2.result.stdout}}"
+      },
+      "meta": {
+        "description": "Deliver outcome to the dispatching agent's conversation."
+      }
+    }
+  ],
+  "edges": [
+    { "from": "work", "to": "verify" },
+    { "from": "verify", "to": "review" },
+    { "from": "review", "to": "anchor_check" },
+    { "from": "anchor_check", "to": "revise" },
+    { "from": "revise", "to": "verify_2" },
+    { "from": "verify_2", "to": "notify" }
+  ]
+}

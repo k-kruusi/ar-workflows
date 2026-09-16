@@ -1,0 +1,23 @@
+{
+  "id": "exec-notify",
+  "name": "Run script → whisper result",
+  "description": "Blueprint: a shell node runs a task (GPU or CPU), then a fire-and-forget whisper node delivers the result to an agent. Customize before running — the Run dialog prompts for `command` (the script to run) and `agent` (who to whisper). The run node's timeout is a 12h ceiling; for longer jobs, clone this blueprint and raise it. NOTE the notify message states exit/ok rather than declaring success: core:exec treats a non-zero exit as a RESULT (ok:false), not a node failure, so `run` COMPLETES even when the command died and this edge fires either way. That is unlike the adversarial-design blueprints, whose notify hangs off a node that genuinely fails — their success marker is earned, this one's would not be.",
+  "nodes": [
+    {
+      "id": "run",
+      "type": "core:exec",
+      "params": { "command": "{{params.command}}" },
+      "timeoutMs": 43200000
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "exec-notify finished — ok={{nodes.run.result.ok}} exit={{nodes.run.result.exitCode}}\nrun: {{run.correlationId}}\ncommand: {{params.command}}\n\nSTDOUT:\n{{nodes.run.result.stdout}}\n\nSTDERR:\n{{nodes.run.result.stderr}}"
+      }
+    }
+  ],
+  "edges": [{ "from": "run", "to": "notify" }]
+}

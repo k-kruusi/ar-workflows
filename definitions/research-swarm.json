@@ -1,0 +1,75 @@
+{
+  "id": "research-swarm",
+  "name": "Research swarm — orchestrate, fan out researchers, synthesize",
+  "description": "Reusable research pattern: an orchestrator decomposes a question into N research lanes, parallel agents explore each lane independently, a synthesizer combines findings into actionable output. Params: question (what to research), cwd (working directory for code-aware research), lanes? (JSON array of lane descriptions — if omitted, the orchestrator decomposes automatically).",
+  "nodes": [
+    {
+      "id": "orchestrate",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-sonnet-5",
+        "prompt": "You are a research orchestrator. Your job is to decompose a research question into 3 independent lanes that can be explored in parallel by separate agents.\n\n=== QUESTION ===\n{{params.question}}\n\nIf the caller provided specific lanes, use those. Otherwise decompose the question into the 3 most productive exploration angles.\n\n{{params.lanes}}\n\nFor each lane, write a SELF-CONTAINED research brief. Each exploring agent will only see its own brief — not the others. Include:\n- LANE NAME: short label\n- OBJECTIVE: what to find out\n- SEARCH STRATEGY: where to look (URLs, files, repos, docs)\n- OUTPUT FORMAT: what to report back (structured findings, not prose)\n\nRespond with exactly 3 lanes separated by ===LANE=== markers.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Orchestrator — decomposes the question into 3 parallel research lanes." }
+    },
+    {
+      "id": "explore-1",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a research agent. Execute the research brief below. Use web search, fetch URLs, read files — whatever the brief calls for. Report your findings in the structured format the brief specifies.\n\nExtract the FIRST lane (before the first ===LANE=== marker or the content of Lane 1) from the orchestrator's output:\n\n{{nodes.orchestrate.result.reply}}\n\nBe thorough but concise. Findings, not commentary.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Explorer 1 — Haiku, fresh session, executes the first research lane." }
+    },
+    {
+      "id": "explore-2",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a research agent. Execute the research brief below. Use web search, fetch URLs, read files — whatever the brief calls for. Report your findings in the structured format the brief specifies.\n\nExtract the SECOND lane (between the first and second ===LANE=== markers or the content of Lane 2) from the orchestrator's output:\n\n{{nodes.orchestrate.result.reply}}\n\nBe thorough but concise. Findings, not commentary.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Explorer 2 — Haiku, fresh session, executes the second research lane." }
+    },
+    {
+      "id": "explore-3",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a research agent. Execute the research brief below. Use web search, fetch URLs, read files — whatever the brief calls for. Report your findings in the structured format the brief specifies.\n\nExtract the THIRD lane (after the second ===LANE=== marker or the content of Lane 3) from the orchestrator's output:\n\n{{nodes.orchestrate.result.reply}}\n\nBe thorough but concise. Findings, not commentary.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Explorer 3 — Haiku, fresh session, executes the third research lane." }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-opus-5",
+        "prompt": "You are a research synthesizer. Three independent agents explored different aspects of a research question. Combine their findings into a single, actionable report.\n\n=== ORIGINAL QUESTION ===\n{{params.question}}\n\n=== LANE 1 FINDINGS ===\n{{nodes.explore-1.result.reply}}\n\n=== LANE 2 FINDINGS ===\n{{nodes.explore-2.result.reply}}\n\n=== LANE 3 FINDINGS ===\n{{nodes.explore-3.result.reply}}\n\nSynthesize into:\n1. KEY FINDINGS: the most important discoveries across all lanes\n2. CONFLICTS: where findings disagree (if any)\n3. GAPS: what none of the lanes covered\n4. ACTIONABLE RECOMMENDATIONS: prioritized next steps\n5. IMPLEMENTATION SPEC: if the question was about building something, provide enough detail to implement directly",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Synthesizer — Opus, fresh session. Combines all three lanes into actionable output." }
+    }
+  ],
+  "edges": [
+    { "from": "orchestrate", "to": "explore-1" },
+    { "from": "orchestrate", "to": "explore-2" },
+    { "from": "orchestrate", "to": "explore-3" },
+    { "from": "explore-1", "to": "synthesize" },
+    { "from": "explore-2", "to": "synthesize" },
+    { "from": "explore-3", "to": "synthesize" }
+  ]
+}

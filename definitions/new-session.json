@@ -1,0 +1,73 @@
+{
+  "id": "new-session",
+  "name": "New Session",
+  "description": "Archive current session and start fresh — replaces the inline /compact handler. Anchors with a bare greeting, which is ONLY correct when the caller has nothing to say to the new session: a greeted agent is told by CLAUDE.md to orient itself, so anything you send afterwards lands as turn 2 on an agent already working. Have a payload (orientation document, summary, a note explaining what was skipped)? Use new-session-oriented, which makes it the anchor so it lands on turn 1. KEEP THE TWO IN SYNC: they must differ ONLY in the anchor node's message (pinned by src/__tests__/new-session-definitions.test.ts).",
+  "nodes": [
+    {
+      "id": "cancel",
+      "type": "supervisor:cancel",
+      "params": { "name": "{{params.agent}}" },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/container.ts",
+        "line": 904,
+        "description": "Cancel any in-flight request so resetConversation doesn't race with execute()"
+      }
+    },
+    {
+      "id": "reset",
+      "type": "supervisor:resetConversation",
+      "params": { "name": "{{params.agent}}" },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/container.ts",
+        "line": 920,
+        "description": "Kill adapter and process tree, clear session ID and history"
+      }
+    },
+    {
+      "id": "clear-session-file",
+      "type": "supervisor:clearSessionFile",
+      "params": { "name": "{{params.agent}}" },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/http-api.ts",
+        "line": 1577,
+        "description": "Clear persisted session ID file so supervisor restart doesn't resurrect stale session"
+      }
+    },
+    {
+      "id": "flush-stats",
+      "type": "supervisor:flushStats",
+      "params": {},
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/container-manager.ts",
+        "line": 1599,
+        "description": "Persist stats immediately so stats.json reflects sessionId: null"
+      }
+    },
+    {
+      "id": "anchor",
+      "type": "supervisor:send",
+      "params": {
+        "name": "{{params.agent}}",
+        "message": "[agentruntime] hey 👋 — fresh session, ready when you are"
+      },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/http-api.ts",
+        "line": 1589,
+        "description": "Send anchor message to establish a new Claude session ID immediately"
+      },
+      "timeoutMs": 120000
+    }
+  ],
+  "edges": [
+    { "from": "cancel", "to": "reset", "on": "always" },
+    { "from": "reset", "to": "clear-session-file" },
+    { "from": "reset", "to": "flush-stats" },
+    { "from": "clear-session-file", "to": "anchor" },
+    { "from": "flush-stats", "to": "anchor" }
+  ]
+}

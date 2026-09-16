@@ -1,0 +1,409 @@
+{
+  "id": "goal-loop-score",
+  "name": "Goal loop — SCORE gate (subjective bar, no terminal state)",
+  "description": "SIBLING of goal-loop, not a replacement. goal-loop gates on a mechanical bar's ok — binary, and therefore TERMINAL: reach it and the loop correctly stops, which is why six consecutive runs were correct one-shots. This gates on a JUDGE'S SCORE against an operator threshold, which has no terminal state: 5.1 always has headroom. The mechanical bar still runs first and still short-circuits the judge, but it is now the DEFECT COLUMN rather than the settle decision — a score without a defect count is unfalsifiable (Claude-of-Duty: +0.46 score while defects went 60->66). The threshold itself lives in scripts/goal-loop-score-gate.mjs, OUTSIDE every seat's write confine, and the judge is never told what it is: it emits a number against an anchored rubric and the comparison happens where no seat can reach it. Three stop conditions stay separate — MET (exit 0), CLIMB (exit 1, iterate), PLATEAU (exit 3, a BLIND/research signal, NOT stop and NOT build-harder). Params: goalId, iteration, goalStatement, rubric, scoreThreshold, cwd, barCommand, barCwd, runtimeRoot, paramsFile, maxIterations, orchestratorModel, workerModel, sessionId, judgeSessionId, notifyAgent, prNumber, branch.",
+  "resultNode": "finish",
+  "nodes": [
+    {
+      "id": "orchestrate",
+      "type": "workflow:run",
+      "timeoutMs": 12600000,
+      "params": {
+        "workflow": "orchestrator-turn",
+        "params": {
+          "goalId": "{{params.goalId}}",
+          "iteration": "{{params.iteration}}",
+          "maxIterations": "{{params.maxIterations}}",
+          "orchestratorModel": "{{params.orchestratorModel}}",
+          "workerModel": "{{params.workerModel}}",
+          "goalStatement": "{{params.goalStatement}}",
+          "cwd": "{{params.cwd}}",
+          "barCommand": "{{params.barCommand}}",
+          "barCwd": "{{params.barCwd}}",
+          "runtimeRoot": "{{params.runtimeRoot}}",
+          "sessionId": "{{params.sessionId}}"
+        }
+      },
+      "meta": {
+        "why": "Unchanged from goal-loop. The turn is not a loop, so depth-1 nesting is correct here; iteration-to-iteration uses an HTTP tail-spawn. TIMEOUT IS TWO-LAYER AND THE INNER ONE BINDS: this wrapper's timeoutMs must stay comfortably ABOVE orchestrator-turn's own 'orchestrate' agent:run timeout, or raising the inner one changes nothing — the outer kills it first. Raised together 2026-08-12 (Kevin) from 120/90 min to 210/180 after measuring real turns: it8 55 min, it9 69 min, while it7 and it10 both died ON the 90-min ceiling. A timed-out turn is not merely a lost round — it leaves the tree half-written, which reds the mechanical bar and drops the run onto the red-bar path, so the ceiling manufactures the very failure mode it looks like it is reporting."
+      }
+    },
+    {
+      "id": "bar",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "{{params.barCommand}}",
+        "cwd": "{{params.barCwd}}",
+        "maxOutputBytes": 60000
+      },
+      "meta": {
+        "why": "Still first, still zero tokens, but its ROLE changed. In goal-loop this measurement IS the settle decision. Here it is the defect column and a short-circuit: it keeps a broken build away from a paid judge, and its check count is what makes the score falsifiable. A score that climbs while this degrades is Goodharting, and the score gate says so out loud."
+      }
+    },
+    {
+      "id": "laneb",
+      "type": "core:exec",
+      "timeoutMs": 600000,
+      "params": {
+        "command": "node \"{{params.runtimeRoot}}/bars/hollowtide/bar-laneb.mjs\" \"{{params.cwd}}\"",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 40000
+      },
+      "meta": {
+        "why": "THE CLIMB METRIC, added 2026-08-11 after the first run plateaued at exactly 4.00 for three rounds while the source genuinely advanced every round. The northstar's 4->5 boundary is 'the loop turns ... ugly', which the judge reads as requiring something visual, so headless work CANNOT move that score and a plateau detector watching it alone fires on real progress. NORTHSTAR already grades its three lanes separately and defines lane B as a GROWING assertion set — that ladder is mechanical, free, and climbable. Runs on an always-edge after the bar so coverage is recorded even on a red round, and it never gates: coverage is a metric, exit 0 means measured. It also prints the NEXT UNLIT RUNG, which is zero-token direction for the builder and converts the judge from 'tell me it is not playable' (structural, useless) into 'grade how well the rung was lit'."
+      }
+    },
+    {
+      "id": "lanep",
+      "type": "core:exec",
+      "timeoutMs": 3600000,
+      "params": {
+        "command": "node \"{{params.runtimeRoot}}/scripts/goal-loop-lanep.mjs\" --cwd \"{{params.cwd}}\" --runtime-root \"{{params.runtimeRoot}}\" --goal \"{{params.goalId}}\" --iteration {{params.iteration}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 40000
+      },
+      "meta": {
+        "why": "THE PERCEPTUAL LANE, added 2026-08-11 once bar-lanep existed outside every write confine. NON-GATING by design (exit 0 = measured or honestly skipped; exit 2 = the INSTRUMENT is broken, never the sim). It runs AFTER judge_gate succeeds, so a red mechanical build never spends a critic seat (orchestrate_by section 9), and BEFORE the judge, whose prompt now carries its stdout as evidence — the same shape lane B uses. It calibrates first (can the board tell our own blurred frame from a clean one, order-consistently) and only measures ours-vs-reference if calibration is green; measurement without calibration is decoration. The board is opus-5 + kimi + deepseek dispatched in parallel via POST to the local supervisor; a seat that cannot read the images lands BLIND and is excluded rather than counted as a failing critic. core:exec REPORTS a non-zero exit as a result, so lanep on an always-edge to the judge cannot fail the loop: a perceptual score must never be able to fail a build."
+      }
+    },
+    {
+      "id": "judge_gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.bar.result.ok}}"
+      },
+      "meta": {
+        "why": "core:exec REPORTS, core:gate ACTUATES — a non-zero exit leaves the exec node 'completed', so without this the red path never fires. Red mechanical bar means the scoring judge is never reached: grading the aesthetics of a broken build is the cheapest waste available."
+      }
+    },
+    {
+      "id": "human_note",
+      "type": "core:exec",
+      "timeoutMs": 30000,
+      "params": {
+        "command": "node \"{{params.runtimeRoot}}/scripts/goal-loop-human-note.mjs\" --cwd \"{{params.cwd}}\" --runtime-root \"{{params.runtimeRoot}}\" --goal \"{{params.goalId}}\"",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "TASTE CHANNEL, added 2026-08-12 after Kevin caught a manager-prompt dump of skill-trees/item-ladder HOW. The orchestrator is not told what to build; the judge is given horizon material and any operator note, and converts those into the same direction/weakest contract it already has. Files live outside the worktree write confine so a builder cannot edit the expectation. Never gates: exit 0 even when both files are missing."
+      }
+    },
+    {
+      "id": "judge",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "",
+        "conventions": "off",
+        "skills": "skills/claims_carry.md",
+        "capabilities": "fs.read",
+        "prompt": "You are the JUDGE of an autonomous goal loop, iteration {{params.iteration}}. You did not do the work. You never see the builder's account — only the artifact and the mechanical bar.\n\nYour ONLY output that matters is a SCORE from 0 to 1000 against the anchored rubric below. You are not deciding whether to ship. You are not told what score is required, and you must not guess at one or try to be helpful by clearing an imagined threshold — someone else applies the threshold, and a judge who scores toward a number they invented has destroyed the only instrument here.\n\n=== THE DESTINATION ===\n{{params.goalStatement}}\n\n=== THE ANCHORED RUBRIC — grades from different judges must form ONE series ===\n{{params.rubric}}\n\n=== THE MECHANICAL BAR, MEASURED INDEPENDENTLY JUST NOW ===\nexit={{nodes.bar.result.exitCode}} ok={{nodes.bar.result.ok}}\n{{nodes.bar.result.stdout}}\n\n=== LANE B — THE HUSK LADDER, MEASURED INDEPENDENTLY JUST NOW ===\n{{nodes.laneb.result.stdout}}\n\n=== LANE P — PERCEPTUAL, MEASURED INDEPENDENTLY JUST NOW (blind, order-swapped, cross-family critics; may be SKIPPED or UNCALIBRATED early) ===\n{{nodes.lanep.result.stdout}}\n\n=== HORIZON + OPERATOR TASTE — MEASURED INDEPENDENTLY JUST NOW ===\n{{nodes.human_note.result.stdout}}\n\nThis is expectation and a peer critic, NOT a spec and NOT a ticket. Metabolize any\ngap between that feeling and the artifact into direction and weakest. Never copy\nits nouns into a how-to. Never name a system the builder should add. An empty\noperator note is not a signal.\n\n=== YOUR JOB ===\nREAD THE ACTUAL CODE in {{params.cwd}} — you have read/grep/glob. Grade the ARTIFACT, never a report about it. A green mechanical bar tells you the code complies with assertions; it tells you nothing about whether the thing is any good, and green bars have repeatedly coexisted with real defects.\n\nScore honestly and hold the anchors fixed. If the work sits at 'one system works in isolation; the loop does not turn', it stays in the 300-499 band even after ten rounds of visible effort — but MOVE IT WITHIN that band as real work lands — effort is not progress, and a rubric that drifts upward to reward activity is worthless. Do not award points for what the code intends, plans, or has scaffolding for. Only for what is observably true today.\n\nTWO FIELDS GO TO THE ORCHESTRATOR, AND NEITHER IS A TICKET.\n\nThe orchestrator is a PERSISTENT SENIOR seat that remembers previous rounds and hires its own\nephemeral workers. You are writing to a capable colleague who will decide the approach, not to\na worker who will transcribe you. Write accordingly.\n\n1. direction — GENERALIZED. Where to push next and WHY it matters. Frame it as DEPTH vs\n   BREADTH where that applies: is this husk better served by going deeper on what exists\n   (making one system genuinely good) or wider (more systems, thinner)? Say which and why.\n   Never say HOW. No file paths, no function or field names, no data shapes, no step lists,\n   no \"add X to Y\". Under 240 characters, enforced by the schema.\n\n2. weakest — a HINT at the weakest part of what exists TODAY. Name the area and why it is\n   weak. This is the one place you may be specific about WHERE, and you still may not be\n   specific about the FIX. Under 200 characters. If the orchestrator keeps sending a junior\n   seat at this area and it stays weak, this hint is what tells it to send someone stronger.\n\nTONE: this loop has no terminal state and is expected to run many rounds. Grade strictly and\nENCOURAGE CONTINUATION — say what is genuinely good as well as what is not. A judge that only\nnames deficits gives a persistent orchestrator no signal about which of its bets paid off, and\nit will stop making bets.\n\nWHY THE HOW IS WITHHELD, because it will feel unhelpful: a fully-specified gap turns the\nbuilder into a transcriber. Four separate experiments on this tree measured that a task with a\nCOMPLETE WRITTEN SPEC does not separate models at any tier — every seat from a 26B model up\ntranscribes a spec correctly and stops thinking. Hand over a plan and the loop becomes a relay.\nThe orchestrator deciding HOW, and choosing WHICH seat to spend on it, is the thing this loop\nexists to exercise. Point at the horizon; let it choose the road and the vehicle.\n\nYou may reference the lane-B ladder to say which capability is dark. You may NOT say how to light it.\n\nnotInspected is equally load-bearing — the loop acts on your denominator, so a judge claiming coverage it did not have is worse than one grading harshly.",
+        "workerProfile": "{{params.judgeProfile}}",
+        "schema": "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"score\",\"verdict\",\"reason\",\"direction\",\"weakest\",\"notInspected\"],\"properties\":{\"score\":{\"type\":\"number\",\"minimum\":0,\"maximum\":1000,\"description\":\"0-1000. Band from what is observably true; PLACEMENT WITHIN the band is mandatory.\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"APPROVE\",\"ESCALATE\"]},\"reason\":{\"type\":\"string\",\"minLength\":1,\"description\":\"why this number, and why not the floor or ceiling of its band\"},\"direction\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":240,\"description\":\"GENERALIZED direction, not a solution. Where to push next and why it matters — depth vs breadth. Never how. No file paths, symbols, shapes or step lists.\"},\"weakest\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":200,\"description\":\"A HINT at the weakest part of what exists now. Name the area and why it is weak. Not a fix, not a patch, not a file.\"},\"notInspected\":{\"type\":\"string\",\"minLength\":1,\"description\":\"what you could NOT check, and why - the loop acts on your denominator\"}}}",
+        "schemaRetries": 3,
+        "runtime": "{{params.judgeRuntime}}",
+        "model": "{{params.judgeModel}}"
+      },
+      "meta": {
+        "why": "EPHEMERAL, ROTATING JUDGE — one node, two transports. seat-deepseek and seat-kimi ride the claude lane via workerProfile (a FILE READ of the profile cartridge env, not a message to any chat agent); grok-4.5 and claude-opus-5 ride runtime+model with workerProfile EMPTY, which agent:run skips because it guards with  and '' is falsy — workerProfile is claude-transport only and throws on runtime grok, so the empty string is load-bearing, not cosmetic. GROK WAS PREVIOUSLY REJECTED FOR THIS LEG and that rejection is now STALE: its NDJSON scrape concatenated narration frames into reply and the fail-closed parser discarded two good verdicts (2026-08-10), but that predates schema+schemaRetries. Re-probed live 2026-08-11 (probe-grok-judge): returned a valid schema-validated verdict, score 325, placed at its band FLOOR with a justification — the instructor pattern fixed it. INDEPENDENCE CAVEAT on the claude-opus-5 seat: the orchestrator is also claude-opus-5 and the default IC is claude-haiku, so on that round the judge is SAME-FAMILY as the builders. That is the F32 flaw-1 shape (generator == evaluator) at vendor rather than model granularity, and it is Kevin's call, recorded here rather than silently accepted. sessionId is deliberately EMPTY: NORTHSTAR requires the judge be fresh context, and a judge that remembers its own prior grades can anchor to them instead of to the rubric. Comparability across rounds is carried by the ANCHORED RUBRIC, which is exactly what an anchored rubric is for. Read-only (fs.read): a judge that can write can make its own verdict true."
+      }
+    },
+    {
+      "id": "score_gate",
+      "type": "core:exec",
+      "timeoutMs": 120000,
+      "params": {
+        "command": "node \"{{params.runtimeRoot}}/scripts/goal-loop-score-gate.mjs\" --score {{nodes.judge.result.structured.score}} --threshold {{params.scoreThreshold}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --bar-ok {{nodes.bar.result.ok}} --bar-exit {{nodes.bar.result.exitCode}} --cid {{run.correlationId}} --runtime-root \"{{params.runtimeRoot}}\"",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 40000
+      },
+      "meta": {
+        "why": "THE SUBJECTIVE BAR'S ACTUATOR, and the reason the threshold is safe. It lives in the runtime repo, outside the write confine granted to every seat in this loop — a seat that can edit its own gate passes by deleting the assertion. It also appends the score+defect row to <cwd>/.goal/SCORE-TREND.jsonl, which is the artifact the OPERATOR reads to make the stop call: this loop has no terminal state, so a human deciding 'good enough' is a first-class stop condition and it needs a five-second view. Exit codes are the three conditions kept separate: 0 MET, 1 CLIMB, 3 PLATEAU, 2 instrument-broken. Self-tested 6/6 including two negative controls before first use."
+      }
+    },
+    {
+      "id": "settle_gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.score_gate.result.ok}}"
+      },
+      "meta": {
+        "why": "ok is true only on exit 0 (MET). Every other outcome closes the gate and the conditioned failure-edges below split CLIMB from PLATEAU from BROKEN — the same idiom goal-loop uses to split a red bar from a broken bar. core:gate fails CLOSED on an unresolved template, so a typo cannot launder itself into an approval here."
+      }
+    },
+    {
+      "id": "land",
+      "type": "core:exec",
+      "timeoutMs": 600000,
+      "params": {
+        "command": "node \"{{params.runtimeRoot}}/scripts/goal-loop-land.mjs\" --cwd \"{{params.cwd}}\" --branch \"{{params.branch}}\" --pr \"{{params.prNumber}}\" --goal \"{{params.goalId}}\" --iteration \"{{params.iteration}}\"",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Structurally present so this is the real loop shape and not a demo, but unreachable at any operator threshold set above what the work can currently earn. That unreachability is the POINT of this definition, not a defect in it."
+      }
+    },
+    {
+      "id": "notify_met",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop-score {{params.goalId}}] THRESHOLD MET at iteration {{params.iteration}} — score {{nodes.judge.result.structured.score}}/10 cleared {{params.scoreThreshold}}.\nbranch: {{params.branch}}   pr: {{params.prNumber}}\nJudge: {{nodes.judge.result.structured.reason}}\nBar: exit={{nodes.bar.result.exitCode}} ok={{nodes.bar.result.ok}}\nland: {{nodes.land.result.stdout}}"
+      },
+      "meta": {
+        "why": "If this ever fires against a threshold set beyond reach, the interesting question is not that the work got good — it is whether the judge drifted. Grade the judge, not just the work."
+      }
+    },
+    {
+      "id": "notify_plateau",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop-score {{params.goalId}}] PLATEAU at iteration {{params.iteration}} — the score stopped moving across consecutive rounds of honest effort.\nThis is a BLIND verdict, not a failure and not a stop: the loop does not know HOW to climb. The actuator is a RESEARCH ticket (change what the loop knows), never another build ticket (change what the loop wrote). Treating these as the same thing is how a loop grinds.\nlast judge reason: {{nodes.judge.result.structured.reason}}\nbiggest gap: {{nodes.judge.result.structured.biggestGap}}\ntrend: {{nodes.score_gate.result.stdout}}"
+      },
+      "meta": {
+        "why": "The third stop condition, surfaced rather than silently collapsed into CLIMB. It deliberately does NOT tail-spawn: another identical build round against a flat score is the ant-mill. It escalates to the operator because flipping build->research is a decision with a cost, and the loop should not make it unattended."
+      }
+    },
+    {
+      "id": "notify_gate_broken",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop-score {{params.goalId}}] ABORTED at iteration {{params.iteration}} — the SCORE GATE ITSELF is broken (exit 2). The work is not the problem; the instrument is. NOT iterating.\n{{nodes.score_gate.result.stdout}}\n{{nodes.score_gate.result.stderr}}"
+      },
+      "meta": {
+        "why": "Exit 2 is the gate declaring itself broken — an unresolved template, a non-numeric score, or a missing defect column. Same convention as bar-t003.mjs. It must abort rather than feed the repair arc: iterating on a broken instrument burns rounds forever on work that may be fine."
+      }
+    },
+    {
+      "id": "spawn_climb",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "node scripts/goal-loop-note.mjs --cid {{run.correlationId}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --runtime-root \"{{params.runtimeRoot}}\" && node scripts/goal-loop-fog.mjs --cwd \"{{params.cwd}}\" --enabled \"{{params.fogCompressLoopLog}}\" && node scripts/goal-loop-render.mjs --cwd \"{{params.cwd}}\" && node scripts/goal-loop-rotate.mjs --params-file \"{{params.paramsFile}}\" --iteration {{params.iteration}} && node scripts/goal-loop-spawn.mjs --workflow goal-loop-score --params-file \"{{params.paramsFile}}\" --mode async --set iteration={{params.iteration}} --session \"{{nodes.orchestrate.result.sessionId}}\" --counter iteration --max {{params.maxIterations}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "THE PATH THAT MAKES THIS A LOOP. Score below threshold: note this round, then ASYNC tail-spawn the next so this run settles while the loop lives. --workflow is goal-loop-score, not goal-loop — re-firing the binary sibling here would silently switch gate shapes mid-experiment. --set threads the LIVE iteration because goal-loop-spawn reads its counter from the static params file; without it the counter never climbs past 2 and the maxIterations ceiling is inert. That ceiling is the only brake on a gate with no terminal state, and it is a SAFETY NET, not a goal."
+      }
+    },
+    {
+      "id": "spawn_red",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "node scripts/goal-loop-note.mjs --cid {{run.correlationId}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --runtime-root \"{{params.runtimeRoot}}\" && node scripts/goal-loop-fog.mjs --cwd \"{{params.cwd}}\" --enabled \"{{params.fogCompressLoopLog}}\" && node scripts/goal-loop-render.mjs --cwd \"{{params.cwd}}\" && node scripts/goal-loop-rotate.mjs --params-file \"{{params.paramsFile}}\" --iteration {{params.iteration}} && node scripts/goal-loop-spawn.mjs --workflow goal-loop-score --params-file \"{{params.paramsFile}}\" --mode async --set iteration={{params.iteration}} --session \"{{nodes.orchestrate.result.sessionId}}\" --counter iteration --max {{params.maxIterations}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Mechanical bar red: iterate without spending the judge. A SEPARATE node from spawn_climb because multiple incoming edges AND together — one shared spawn node would silently skip whenever either gate took the other branch."
+      }
+    },
+    {
+      "id": "spawn_unreadable",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "node scripts/goal-loop-note.mjs --cid {{run.correlationId}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --runtime-root \"{{params.runtimeRoot}}\" && node scripts/goal-loop-fog.mjs --cwd \"{{params.cwd}}\" --enabled \"{{params.fogCompressLoopLog}}\" && node scripts/goal-loop-render.mjs --cwd \"{{params.cwd}}\" && node scripts/goal-loop-rotate.mjs --params-file \"{{params.paramsFile}}\" --iteration {{params.iteration}} && node scripts/goal-loop-spawn.mjs --workflow goal-loop-score --params-file \"{{params.paramsFile}}\" --mode async --set iteration={{params.iteration}} --session \"{{nodes.orchestrate.result.sessionId}}\" --counter iteration --max {{params.maxIterations}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Reached when the judge node FAILS outright — schema retries exhausted, not one malformed reply. Iterate rather than abort; the next round gets a fresh judge."
+      }
+    },
+    {
+      "id": "notify_bar_broken",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop-score {{params.goalId}}] ABORTED at iteration {{params.iteration}} — the MECHANICAL BAR is broken (exit 2, refusing to grade). The sim is NOT the problem; the instrument is. NOT iterating.\nbar stdout: {{nodes.bar.result.stdout}}\nbar stderr: {{nodes.bar.result.stderr}}"
+      },
+      "meta": {
+        "why": "Exit 2 from the mechanical bar means fix the INSTRUMENT; exit 1 means fix the work. The conditioned edges split them, exactly as goal-loop does."
+      }
+    },
+    {
+      "id": "finish",
+      "type": "core:noop",
+      "timeoutMs": 30000,
+      "params": {},
+      "meta": {
+        "why": "Single terminal on always-edges from every branch, so the run resolves exactly one resultNode whichever path fired."
+      }
+    },
+    {
+      "id": "notify_stopped",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop-score {{params.goalId}}] HUMAN STOP at iteration {{params.iteration}} — .goal/STOP exists, so the operator halted the loop. This is NOT met: nothing landed and nothing was pushed. Delete the file to resume.\n{{nodes.score_gate.result.stdout}}"
+      },
+      "meta": {
+        "why": "The third stop condition made operable. A score gate has no terminal state, so 'a human decided' is a first-class outcome rather than an interruption — and an unattended overnight loop needs a brake its operator can reach without an agent in the seat. Deliberately distinct from MET: stopping is not passing."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "orchestrate",
+      "to": "bar",
+      "on": "always"
+    },
+    {
+      "from": "bar",
+      "to": "laneb",
+      "on": "always"
+    },
+    {
+      "from": "laneb",
+      "to": "judge_gate",
+      "on": "always"
+    },
+    {
+      "from": "judge_gate",
+      "to": "lanep",
+      "on": "success"
+    },
+    {
+      "from": "judge_gate",
+      "to": "human_note",
+      "on": "success"
+    },
+    {
+      "from": "judge_gate",
+      "to": "spawn_red",
+      "on": "failure",
+      "condition": "nodes.bar.result.exitCode !== 2"
+    },
+    {
+      "from": "judge_gate",
+      "to": "notify_bar_broken",
+      "on": "failure",
+      "condition": "nodes.bar.result.exitCode === 2"
+    },
+    {
+      "from": "judge",
+      "to": "score_gate",
+      "on": "success"
+    },
+    {
+      "from": "judge",
+      "to": "spawn_unreadable",
+      "on": "failure"
+    },
+    {
+      "from": "score_gate",
+      "to": "settle_gate",
+      "on": "always"
+    },
+    {
+      "from": "settle_gate",
+      "to": "land",
+      "on": "success"
+    },
+    {
+      "from": "settle_gate",
+      "to": "spawn_climb",
+      "on": "failure",
+      "condition": "nodes.score_gate.result.exitCode === 1"
+    },
+    {
+      "from": "settle_gate",
+      "to": "notify_plateau",
+      "on": "failure",
+      "condition": "nodes.score_gate.result.exitCode === 3"
+    },
+    {
+      "from": "settle_gate",
+      "to": "notify_gate_broken",
+      "on": "failure",
+      "condition": "nodes.score_gate.result.exitCode === 2"
+    },
+    {
+      "from": "land",
+      "to": "notify_met",
+      "on": "success"
+    },
+    {
+      "from": "notify_met",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "notify_plateau",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "notify_gate_broken",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "notify_bar_broken",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "spawn_climb",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "spawn_red",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "spawn_unreadable",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "settle_gate",
+      "to": "notify_stopped",
+      "on": "failure",
+      "condition": "nodes.score_gate.result.exitCode === 4"
+    },
+    {
+      "from": "notify_stopped",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "lanep",
+      "to": "judge",
+      "on": "always"
+    },
+    {
+      "from": "human_note",
+      "to": "judge",
+      "on": "always"
+    }
+  ]
+}

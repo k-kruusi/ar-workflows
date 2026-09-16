@@ -1,0 +1,83 @@
+{
+  "id": "quick-fix-grok-gemma",
+  "name": "Quick fix — Grok implements, local gemma-4 reviews",
+  "resultNode": "fix",
+  "description": "Bespoke twin of quick-fix for multi-runtime independence: an ephemeral Grok 4.5 worker implements (runtime=grok, tools=ar-tools — required because grok has no Claude built-ins), a mechanical core:exec captures git status+diff as evidence, then local gemma-4 reviews via model:generate tier=local-review (cognitive-router → turboquant :8090). If rejected, the same Grok session resumes and fixes. ||| MISCONCEPTION THIS DEFINITION CORRECTS: gemma-4 is NOT an agent:run seat. agent:run only speaks claude|grok; workerProfile needs Anthropic-protocol upstreams. Local OpenAI-compat models enter as model:generate through a router tier (local-review → provider turboquant / model gemma-4-26b-a4b-qat). Gemma has NO filesystem tools — it judges the text it is handed, so the evidence node is load-bearing, not optional. ||| DELIBERATE DEPARTURES FROM stock quick-fix: (1) no ship node — this monorepo uses safe-commit with explicit paths, never git add -A; the caller ships. (2) no in-graph agent:notify — use POST body notify for a terminal status ping, or poll /workflow/runs. ||| BODY NOTIFY SHAPE (measured smoke wf-1786310716034-srtm6w): notify is an OBJECT {\"agent\":\"...\",\"message\":\"...\"}, NOT a string — a string is silently ignored (run still starts). Custom message is NOT template-interpolated (fireNotify leaves {{run.correlationId}} literal); omit message to get the default which already embeds the real correlationId + status. Params: task (required), cwd (required — prepared worktree preferred). Fire: POST /workflow {\"workflow\":\"quick-fix-grok-gemma\",\"async\":true,\"fresh\":true,\"params\":{\"task\":\"...\",\"cwd\":\"...\"},\"notify\":{\"agent\":\"grok-4.5-jonah\"}}. ||| params.paths (optional, strongly recommended on dirty monorepos): comma-separated repo-relative paths that scope the evidence node. Without it, whole-tree dirt can starve gemma's answer budget.",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "observe": true,
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "You are completing a quick, bounded task as the IMPLEMENTER in a multi-runtime workflow. A local model (gemma-4) will review your work from your summary plus a mechanical git status/diff — it cannot read the repo itself.\n\n=== TASK ===\n{{params.task}}\n\nRULES:\n- Be precise and minimal — do exactly what is asked, nothing more.\n- Prefer surgical edits. Do NOT commit, push, or open a PR (the caller owns ship via safe-commit).\n- Use ar-tools (read_file, edit_file, write_file, run_command, grep_search, …) for all file and shell work.\n\nWhen done, reply with:\n1. SUMMARY — one short paragraph of what changed and why.\n2. FILES — bullet list of repo-relative paths you touched.\n3. VERIFY — any commands you ran and their outcomes (tsc, tests, etc.).\n4. RISKS — anything you could not verify or left incomplete."
+      },
+      "meta": {
+        "description": "Implementer — ephemeral Grok 4.5 + ar-tools. Writes code; returns a reviewable summary."
+      }
+    },
+    {
+      "id": "evidence",
+      "type": "core:exec",
+      "timeoutMs": 60000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "command": "powershell -NoProfile -Command \"$raw = '{{params.paths}}'.Trim(); $scope = @(); if ($raw -and $raw -notmatch '^\\{\\{') { $scope = @($raw.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }; Write-Output ('---SCOPE---'); if ($scope.Count -eq 0) { Write-Output '(whole tree — prefer params.paths for monorepo tasks)' } else { Write-Output ($scope -join ', ') }; Write-Output '---STATUS---'; if ($scope.Count -gt 0) { $st = (git status -s -- @scope | Out-String) } else { $st = (git status -s | Out-String) }; if ($st.Length -gt 6000) { Write-Output ($st.Substring(0,6000) + [Environment]::NewLine + '...[status truncated]') } else { Write-Output $st }; Write-Output '---DIFF-STAT---'; if ($scope.Count -gt 0) { git diff --stat -- @scope } else { git diff --stat }; Write-Output '---PATCH---'; if ($scope.Count -gt 0) { $p = (git diff -- @scope | Out-String) } else { $p = (git diff | Out-String) }; if ($p.Length -gt 20000) { Write-Output ($p.Substring(0,20000) + [Environment]::NewLine + '...[patch truncated at 20KB]') } else { Write-Output $p }; Write-Output '---STAGED---'; if ($scope.Count -gt 0) { git diff --cached --stat -- @scope } else { git diff --cached --stat }; Write-Output '---UNTRACKED---'; $all = @(git ls-files --others --exclude-standard -- @scope); if ($scope.Count -eq 0) { $all = @(git ls-files --others --exclude-standard) }; $u = @($all | Select-Object -First 12); if ($all.Count -eq 0) { Write-Output '(none)' } else { Write-Output ('count=' + $all.Count + ' showing=' + $u.Count); foreach ($f in $u) { Write-Output ('===FILE: ' + $f + '==='); try { $t = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $f)); if ($t.Length -gt 4096) { Write-Output ($t.Substring(0,4096) + [Environment]::NewLine + '...[truncated at 4KB]') } else { Write-Output $t } } catch { Write-Output ('(unreadable: ' + $_.Exception.Message + ')') } }; if ($all.Count -gt 12) { Write-Output ('...[' + ($all.Count - 12) + ' more untracked omitted]') } }\"",
+        "maxOutputBytes": 48000
+      },
+      "meta": {
+        "description": "Mechanical evidence (powershell, win32 core:exec). Optional params.paths (comma-separated) scopes status/diff/untracked — REQUIRED in practice for dirty monorepos. Caps: status 6KB, patch 20KB, untracked 12x4KB, maxOutputBytes 48KB. Scars: bash ; → git short; (smoke1); uncapped ~1MB → HTTP 400 (wf-…8cwtlr); whole-tree ~50KB + maxTokens 16k still exhausted reasoning (wf-…mwny11)."
+      }
+    },
+    {
+      "id": "verify",
+      "type": "model:generate",
+      "timeoutMs": 600000,
+      "params": {
+        "tier": "local-review",
+        "maxTokens": 32768,
+        "prompt": "You are a local code reviewer (gemma-4). NO tools. Judge only TASK + SUMMARY + GIT EVIDENCE.\n\n=== TASK ===\n{{params.task}}\n\n=== IMPLEMENTER SUMMARY ===\n{{nodes.work.result.reply}}\n\n=== GIT EVIDENCE ===\n{{nodes.evidence.result.stdout}}\nexitCode={{nodes.evidence.result.exitCode}} ok={{nodes.evidence.result.ok}}\n{{nodes.evidence.result.stderr}}\n\nRules: Prefer patch and ---UNTRACKED--- dumps over the summary. If evidence is empty/failed and summary is unsubstantiated, REJECT. If summary claims changes not in patch/UNTRACKED, REJECT. Be brief.\n\nReply with exactly:\nAPPROVE — <one sentence>\nor\nREJECT — <numbered fixes>"
+      },
+      "meta": {
+        "description": "Reviewer — model:generate local-review (gemma-4). maxTokens 32768; short prompt. Pair with params.paths so evidence is task-scoped."
+      }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "observe": true,
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "A local gemma-4 reviewer checked your work (text-only: your summary + a mechanical git diff).\n\n=== REVIEW ===\n{{nodes.verify.result.reply}}\n\nIf the review starts with APPROVE, leave the tree as-is and reply exactly: No changes needed.\nIf it starts with REJECT (or otherwise lists problems), address every issue raised. Do NOT commit or push.\n\nReply with what you fixed (or 'No changes needed.')."
+      },
+      "meta": {
+        "description": "Fix — same Grok session as work. Resumes history; addresses gemma feedback if any."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "work",
+      "to": "evidence"
+    },
+    {
+      "from": "evidence",
+      "to": "verify"
+    },
+    {
+      "from": "verify",
+      "to": "fix"
+    }
+  ]
+}

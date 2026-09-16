@@ -1,0 +1,128 @@
+{
+  "id": "ox-issue-fix",
+  "name": "ox-issue-fix - Ox Alpha works one GitHub issue end-to-end in an isolated worktree",
+  "description": "Per-issue gauntlet v2 (issue #846): 3 implementation legs x 2 cross-family verification gates, ALWAYS producing a PR. fetch the issue, create a dedicated git worktree, Ox Alpha implements headless, muse-spark verifies adversarially against the ISSUE TEXT, a revise leg resumes the builder session to address findings, muse re-verifies the revised tree, a polish leg makes a final pass, then ship ALWAYS pushes branch + opens a PR whose body embeds both verification verdicts verbatim plus a KNOWN-ISSUES section listing any standing REJECT points - human reviewers inherit the machine's doubts instead of losing them. Designed for a model that is uncapped but SLOW: generous timeouts, volume over token-frugality. Params: issue (number), repo (absolute path to checkout), wt (absolute worktree path - caller chooses location; scripts/ox-tickets.ps1 defaults it to a sibling dir). Cleanup contract: caller owns worktree lifecycle - `git worktree remove <wt>` after the PR merges.",
+  "params": {
+    "issue": { "type": "num", "required": true },
+    "repo": { "type": "str", "required": true },
+    "wt": { "type": "str", "required": true }
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "core:exec",
+      "timeoutMs": 120000,
+      "params": {
+        "cwd": "{{params.repo}}",
+        "command": "gh issue view {{params.issue}} --json number,title,body,labels"
+      },
+      "meta": { "description": "Fetch the issue - title, body, labels." }
+    },
+    {
+      "id": "setup",
+      "type": "core:exec",
+      "timeoutMs": 120000,
+      "params": {
+        "cwd": "{{params.repo}}",
+        "command": "git worktree add {{params.wt}} fix/issue-{{params.issue}} || git worktree add {{params.wt}} -b fix/issue-{{params.issue}}"
+      },
+      "meta": { "description": "Idempotent worktree: attach to an existing fix branch or create it fresh - retries and reruns land in a real directory either way." }
+    },
+    {
+      "id": "implement",
+      "type": "agent:run",
+      "timeoutMs": 2700000,
+      "params": {
+        "runtime": "opencode",
+        "model": "opencode/x-preview-f-free",
+        "skipPerms": true,
+        "cwd": "{{params.wt}}",
+        "prompt": "You are fixing a GitHub issue in THIS repository (your cwd is a dedicated git worktree - edit freely here).\n\n=== ISSUE #{{params.issue}} ===\n{{nodes.fetch.result.stdout}}\n\n=== HOW TO WORK ===\n1. Explore first: find the code the issue is about before proposing anything.\n2. This repo's coding doctrine lives in skills/program_style.md (negative space programming) and skills/assert_on.md (assert what you know) - read both and follow them. Surgical edits only: touch only what the fix needs.\n3. Implement the minimal correct fix.\n4. Verify for real: run npx tsc --noEmit; if tests exist near what you changed, run the targeted vitest file(s), not the whole suite.\n5. Do NOT commit - a later step handles that. Leave your changes in the working tree.\n\nReply with: (a) root cause in one sentence, (b) what you changed and why, (c) verification output proof (paste the tail), (d) list of changed files.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": { "description": "Implementer leg 1 - Ox Alpha, uncapped/slow, 45 min budget. Works in the isolated worktree." }
+    },
+    {
+      "id": "verify",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "opencode",
+        "model": "opencode/muse-spark-1.2-contributor-free",
+        "skipPerms": true,
+        "cwd": "{{params.wt}}",
+        "prompt": "You are an ADVERSARIAL verifier (verification gate 1 of 2). Another agent claims to have fixed a GitHub issue in this worktree. Your job is to sink bad work, not to be agreeable.\n\n=== ISSUE #{{params.issue}} ===\n{{nodes.fetch.result.stdout}}\n\n=== IMPLEMENTER'S CLAIM ===\n{{nodes.implement.result.reply}}\n\n=== VERIFY, IN THIS ORDER ===\n1. git status --short && git diff - read the ACTUAL diff yourself; do not trust the claim's description of it.\n2. Does the diff actually address the issue's root cause - or a symptom? Would the reported failure now pass?\n3. Scope check: any unrelated changes smuggled in? Flag them.\n4. Doctrine check: skills/program_style.md + skills/assert_on.md - hidden assumptions, defensive fallbacks for impossible cases, empty catches swallowing real failures.\n5. Re-run npx tsc --noEmit yourself. Paste its tail.\n6. If tests cover the changed code, run the targeted file.\n\nReply EXACTLY one of:\nAPPROVE - <one-line reason>\nREJECT - <numbered list of concrete defects, each with file:line>",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Verification gate 1 - fresh muse-spark instance (cross-family vs ox-alpha builder), judges against issue text + real diff." }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 2700000,
+      "params": {
+        "runtime": "opencode",
+        "model": "opencode/x-preview-f-free",
+        "skipPerms": true,
+        "cwd": "{{params.wt}}",
+        "sessionId": "{{nodes.implement.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "A verifier reviewed your fix:\n\n=== VERDICT (gate 1) ===\n{{nodes.verify.result.reply}}\n\nIf the verdict starts with APPROVE: change NOTHING, reply exactly 'No changes needed.' Otherwise address EVERY numbered defect, re-run npx tsc --noEmit, and reply with what you fixed per point. Still do not commit."
+      },
+      "meta": { "description": "Revise - implementation leg 2, resumes the builder's session so context carries; no-op on APPROVE." }
+    },
+    {
+      "id": "verify2",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "opencode",
+        "model": "opencode/muse-spark-1.2-contributor-free",
+        "skipPerms": true,
+        "cwd": "{{params.wt}}",
+        "capabilities": "fs.read,shell",
+        "prompt": "You are an ADVERSARIAL verifier (verification gate 2 of 2 - the POST-REVISION re-check, issue #846). A builder fixed a GitHub issue, was reviewed, revised its work in response, and you must now judge the FINAL state with fresh eyes.\n\n=== ISSUE #{{params.issue}} ===\n{{nodes.fetch.result.stdout}}\n\n=== GATE 1 VERDICT (what the first reviewer demanded) ===\n{{nodes.verify.result.reply}}\n\n=== BUILDER'S REVISION SUMMARY ===\n{{nodes.fix.result.reply}}\n\n=== VERIFY THE FINAL STATE ===\n1. git status --short && git diff - read the actual current diff end-to-end yourself.\n2. Were gate-1 defects genuinely fixed, or cosmetically papered over?\n3. Any NEW problems introduced by the revision itself?\n4. Re-run npx tsc --noEmit. Paste its tail.\n\nReply EXACTLY one of:\nAPPROVE - <one-line reason>\nREJECT - <numbered list of remaining/new defects, each with file:line>"
+      },
+      "meta": { "description": "Verification gate 2 - fresh muse-spark instance re-checks the revised tree; closes the shipped-with-REJECT hole (#846)." }
+    },
+    {
+      "id": "polish",
+      "type": "agent:run",
+      "timeoutMs": 2700000,
+      "params": {
+        "runtime": "opencode",
+        "model": "opencode/x-preview-f-free",
+        "skipPerms": true,
+        "cwd": "{{params.wt}}",
+        "sessionId": "{{nodes.fix.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "Final gate-2 verifier review of your work:\n\n=== VERDICT (gate 2) ===\n{{nodes.verify2.result.reply}}\n\nIf the verdict starts with APPROVE: change NOTHING, reply exactly 'No changes needed.' Otherwise this is your FINAL implementation leg (leg 3): fix every remaining defect precisely, re-run npx tsc --noEmit, and reply with what you changed per point plus anything you deliberately left unresolved and why. Still do not commit - the next step ships whatever state exists, including known issues if any remain."
+      },
+      "meta": { "description": "Implementation leg 3 (final polish) - resumes the builder thread; addresses gate-2 residuals or declares them." }
+    },
+    {
+      "id": "ship",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "opencode",
+        "model": "opencode/x-preview-f-free",
+        "skipPerms": true,
+        "cwd": "{{params.wt}}",
+        "sessionId": "{{nodes.polish.result.sessionId}}",
+        "prompt": "Ship the fix. You are in an ISOLATED worktree on branch fix/issue-{{params.issue}} - plain git is safe here (this worktree has its own index; you are NOT on the shared checkout, and never push main).\n\nTHIS STEP ALWAYS PRODUCES A PR when any change exists - even if verification raised unresolved concerns. Those concerns go INTO the PR body as a KNOWN-ISSUES section so human reviewers inherit them (#846).\n\n1. git status --short - if EMPTY (and no meaningful work occurred), reply NO-CHANGES and stop.\n2. git add <each changed path explicitly> - never add -A / add .\n3. git commit -m \"<type>(<scope>): <what and why>\" - conventional, references the root cause. Type is fix unless the issue is clearly refactor/test/docs/chore.\n4. git push -u origin fix/issue-{{params.issue}}\n5. gh pr create --base main --title \"<title>\" --body with EXACTLY these sections:\n   Fixes #{{params.issue}}\n\n   ## Summary\n   <2-4 sentences: root cause, approach, verification>\n\n   ## Machine review trail\n   Gate 1: {{nodes.verify.result.reply}}\n   Gate 2: {{nodes.verify2.result.reply}}\n   Polish: {{nodes.polish.result.reply}}\n\n   ## KNOWN-ISSUES\n   <List any standing REJECT points from either gate that remain unresolved after polish, verbatim with file:line. Write 'none' if all gates approved.>\n\nReply with the PR URL, or NO-CHANGES.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": { "description": "Ship - ALWAYS lands a PR carrying both gate verdicts + KNOWN-ISSUES; unconditional by design (#846)." }
+    }
+  ],
+  "edges": [
+    { "from": "fetch", "to": "setup" },
+    { "from": "setup", "to": "implement" },
+    { "from": "implement", "to": "verify" },
+    { "from": "verify", "to": "fix" },
+    { "from": "fix", "to": "verify2" },
+    { "from": "verify2", "to": "polish" },
+    { "from": "polish", "to": "ship" }
+  ]
+}

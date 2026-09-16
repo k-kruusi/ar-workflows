@@ -1,0 +1,113 @@
+{
+  "id": "gated-build",
+  "name": "Gated build — implement against a project-owned gate, verify, fix, re-gate, land only on green",
+  "description": "GENERIC build loop. The workflow owns the TOPOLOGY (implement → engine-gate → cross-family verify → fix → re-gate → land → notify); the CALLER owns the gate, the task, and the commit. Nothing about any one project appears in this file. Two properties it exists to enforce: (1) the gate is run by the ENGINE, never self-reported by the implementer — an agent claiming green is not green; (2) the land step chains the gate and the commit with a shell &&, so a red gate CANNOT commit — the conditional is enforced by the shell, not by asking an agent to be honest. Params: cwd, task, gate, commitMsg, commitPaths, safeCommit?, regress?, reviewChecks?, implRuntime?, implModel?, verifyModel?, notifyAgent?. ||| ALL PARAMS ARE REQUIRED — unresolved templates stay LITERAL in this engine, so a missing param injects {{params.x}} into a shell command and breaks it rather than defaulting. When you have no value: regress=\"true\" (shell no-op that exits 0), reviewChecks=\"\" (empty). commitPaths is a space-separated list, explicit paths only — safe-commit takes no -A and a shared-index sweep steals other agents in-flight work. safeCommit is the absolute path to scripts/safe-commit.ps1; it is a param because cwd is usually a worktree at an unpredictable depth from the runtime root. Land does NOT push.",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "{{params.implRuntime}}",
+        "model": "{{params.implModel}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "You are implementing a change in this directory.\n\n=== TASK ===\n{{params.task}}\n\n=== HOW YOU KNOW YOU ARE DONE ===\nRun:  {{params.gate}}\n\nThat command is the definition of done. It is OWNED BY THE PROJECT, not by you.\n\nDO NOT EDIT THE GATE, or any file it reads as its own definition of correctness. A seat that can edit its gate passes by deleting the assertion. If you believe the gate itself is wrong, STOP and say so in your reply with your reasoning and the evidence — that is a legitimate and useful outcome. Do not change it to pass.\n\nThe gate may take several minutes if it renders or builds. That is expected. Iterate until it exits 0.\n\nReply with: what you changed, the gate's final output, and anything the task above got wrong."
+      },
+      "meta": {
+        "description": "Implementer. Single sequential owner — decompose by COUPLING, not by area."
+      }
+    },
+    {
+      "id": "gate",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "command": "{{params.gate}}"
+      },
+      "meta": {
+        "description": "Gate #1, run by the ENGINE. A non-zero exit is a RESULT here, not a node failure, so the verifier still gets to see a red gate and reason about it."
+      }
+    },
+    {
+      "id": "verify",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "{{params.verifyModel}}",
+        "capabilities": "fs.read,shell",
+        "prompt": "You are verifying an implementation. Be adversarial but fair.\n\n=== WHAT WAS ASKED ===\n{{params.task}}\n\n=== WHAT THE IMPLEMENTER SAID ===\n{{nodes.work.result.reply}}\n\n=== WHAT THE GATE SAID WHEN THE ENGINE RAN IT ===\nexit code: {{nodes.gate.result.exitCode}}\n{{nodes.gate.result.stdout}}\n{{nodes.gate.result.stderr}}\n\n=== CHECK BY READING THE ACTUAL DIFF (git diff), NOT THE CLAIM ===\n1. Was the GATE modified? Run git diff on the gate's own path. If the implementer changed the gate to make it pass, that is an automatic REJECT — say so loudly.\n2. Does the diff actually do what the task asked, or only appear to?\n3. Did it break anything adjacent that the task said to leave alone?\n4. Are failures loud? Silent skips and swallowed errors produce output that looks fine and is wrong.\n{{params.reviewChecks}}\n\nIF THE GATE IS RED: do not wave it through. But DO diagnose it — a gate can be wrong (an unsatisfiable assertion, a measurement artifact), and saying so with evidence is more valuable than a bare REJECT. State clearly whether the defect is in the IMPLEMENTATION or in the GATE, and give the reasoning someone can check.\n\nReply APPROVE only if the work is correct AND the gate exited 0. Otherwise REJECT with specific problems, each naming a file and line."
+      },
+      "meta": {
+        "description": "Verifier — cross-family from the implementer, reads the diff rather than trusting the report."
+      }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "{{params.implRuntime}}",
+        "model": "{{params.implModel}}",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "A reviewer checked your work:\n\n=== REVIEW ===\n{{nodes.verify.result.reply}}\n\nIf the reviewer APPROVED, change nothing and reply exactly: No changes needed.\n\nOtherwise address every issue raised, then re-run  {{params.gate}}  until it exits 0. Still do not edit the gate. If the reviewer concluded the GATE is at fault rather than your code, do not work around it — say so and stop; fixing the gate is the caller's job, not yours.\n\nReply with what you fixed and the gate's final output."
+      },
+      "meta": {
+        "description": "Fix — resumes the implementer's own session so it keeps the context of what it built."
+      }
+    },
+    {
+      "id": "land",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "command": "{{params.gate}} && {{params.regress}} && powershell -ExecutionPolicy Bypass -File {{params.safeCommit}} -m \"{{params.commitMsg}}\" {{params.commitPaths}}"
+      },
+      "meta": {
+        "description": "Land — core:exec. The gate is RE-RUN after the fix pass and chained to the commit with &&, so a red gate cannot land. This is the node whose absence let a self-reported green get committed once. Never make this an agent:run asking nicely."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 300000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "condense": true,
+        "task": "gated build",
+        "message": "**gated-build finished** (run {{run.correlationId}})\n\n**Gate #1 (engine, exit {{nodes.gate.result.exitCode}}):**\n{{nodes.gate.result.stdout}}\n\n**Verifier:**\n{{nodes.verify.result.reply}}\n\n**Fix:**\n{{nodes.fix.result.reply}}\n\n**Land — gate re-run then commit (exit {{nodes.land.result.exitCode}}):**\n{{nodes.land.result.stdout}}\n{{nodes.land.result.stderr}}\n\nA non-zero land exit means the gate was still red and NOTHING was committed. That is the guard working, not a crash."
+      },
+      "meta": {
+        "description": "Notify — fire-and-forget back to the caller. Async runs only."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "work",
+      "to": "gate"
+    },
+    {
+      "from": "gate",
+      "to": "verify"
+    },
+    {
+      "from": "verify",
+      "to": "fix"
+    },
+    {
+      "from": "fix",
+      "to": "land"
+    },
+    {
+      "from": "land",
+      "to": "notify"
+    }
+  ]
+}

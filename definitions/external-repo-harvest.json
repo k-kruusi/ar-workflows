@@ -1,0 +1,101 @@
+{
+  "id": "external-repo-harvest",
+  "name": "External-repo harvest — clone an open-source repo, mine transferable wins for agentruntime, card the adoptions",
+  "description": "Generalizes the grok-build exploration into reusable machinery: point it at any open-source repo and it clones it, maps what the repo IS, fans out 3 harvester lanes (each through a distinct lens — architecture/data-model, novel techniques, interfaces/DX), and a synthesis tier ranks the highest-value ADOPTIONS given what agentruntime already has. HONEST BY DESIGN: every lane must check OUR tree before claiming a gap ('assume it exists until search proves otherwise' — chrono/task-graph were both re-found after being assumed missing); a win we already have is dropped, not carded. Findings land on the genesis board (collapse_key harvest-<slug>-*) for human triage — NOT auto-adopted. Params (ALL REQUIRED — an unfilled param passes through literally and fails loudly, same contract as divergent-reasoning-custom): repoUrl (git URL to clone), slug (short kebab name — names the temp clone dir + genesis collapse_keys), focus (prose: which agentruntime capability this repo maps to, e.g. 'our memory/graph stack: packages/memory, repo-memory, graph, genesis'), curatorModel (harvester+synthesis tier, e.g. claude-opus-4-8 — verification quality is model-dependent), notify (who gets the summary, e.g. claude). Standard invocation: POST /workflow {\"workflow\":\"external-repo-harvest\",\"async\":true,\"params\":{\"repoUrl\":\"https://github.com/owner/repo\",\"slug\":\"repo\",\"focus\":\"...\",\"curatorModel\":\"claude-opus-4-8\",\"notify\":\"claude\"}}. Windows host: the clone node uses cmd syntax + D:/tmp.",
+  "nodes": [
+    {
+      "id": "clone",
+      "type": "core:exec",
+      "timeoutMs": 420000,
+      "params": {
+        "command": "rmdir /s /q D:\\tmp\\harvest-{{params.slug}} 2>nul & git clone --depth 1 {{params.repoUrl}} D:\\tmp\\harvest-{{params.slug}} & git -C D:\\tmp\\harvest-{{params.slug}} ls-files"
+      },
+      "meta": { "description": "Shallow-clone the target repo to D:/tmp/harvest-<slug>; stdout is its ls-files tree for the mapper. NOTE: do NOT use `if exist PATH cmd & next` — on Windows CMD, when PATH is missing the false IF skips the rest of the line including `& git clone`, so the node exits 0 with empty stdout and no tree (wf-1784891327668-vnljg2, 34ms no-op). Always rmdir (2>nul) then clone." }
+    },
+    {
+      "id": "map",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are the MAPPER of an external-repo harvest. The repo is cloned at D:/tmp/harvest-{{params.slug}} (READ it with your tools). Our interest — what to mine it FOR: {{params.focus}}.\n\nIts file tree:\n{{nodes.clone.result.stdout}}\n\nActively read its README, top-level package/module layout, and 3-5 of its most load-bearing source files. Produce a tight MAP for the harvester lanes: (1) what this project IS in 2-3 sentences; (2) its 4-6 most distinctive/novel pieces (data model, core algorithm, interfaces, storage, orchestration) with the real file paths where each lives; (3) the single most important thing it does that our focus area might learn from. Be concrete and cite real cloned-repo paths. This map grounds the lanes — do not editorialize about adoption yet.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Reads the cloned repo, produces a grounded map (what it is + its distinctive pieces + paths) for the lanes." }
+    },
+    {
+      "id": "harvest-1",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are HARVESTER LANE 1 — LENS: ARCHITECTURE & DATA MODEL. The external repo is cloned at D:/tmp/harvest-{{params.slug}}; your cwd is the agentruntime monorepo. Focus: {{params.focus}}.\n\nMAP:\n{{nodes.map.result.reply}}\n\nThrough your lens (how it structures data / schema / storage / graph / retrieval), find 2-4 TRANSFERABLE WINS — things about its architecture or data model that would strengthen agentruntime's focus area. For EACH win:\n1. Read the actual cloned-repo code that implements it (cite file:line).\n2. HONESTY GATE (what makes you a harvester, not a hype machine): search OUR tree for whether agentruntime ALREADY has this — 'assume it exists until search proves otherwise' (chrono and task-graph were both re-found after being assumed missing). If we already have it, DROP the win (or reframe as a concrete improvement to what we have, citing our file). A win we already have, carded as new, is worse than none.\n3. ROUTE each survivor: adopt-now (clear + high-value) | prototype (promising, needs a spike) | note (interesting, not now) | drop.\n4. CARD IT: write a JSON file {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"external-repo-harvest\",\"payload\":{\"agent\":\"harvest-{{params.slug}}-arch\",\"source\":\"conversation\",\"collapse_key\":\"harvest-{{params.slug}}-arch\",\"title\":\"Harvest ({{params.slug}}/arch): <n> transferable win(s)\",\"why\":\"External-repo harvest, honesty-gated against our tree; for triage, NOT auto-adopted.\",\"note\":\"<one line per win: [route] title — THEIRS: repo/path.py:line — OURS: agentruntime/path.ts (have?/gap) — value>\"}} then POST it: curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm genesis is in observers.\n5. Reply with a compact digest: wins table (title | THEIR ref | do-we-have-it? | route | value), an honest 'checked-and-dropped (already have)' list, and card-posted confirmation.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Lane 1 — architecture/data-model lens, honesty-gated against our tree." }
+    },
+    {
+      "id": "harvest-2",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are HARVESTER LANE 2 — LENS: NOVEL TECHNIQUES & ALGORITHMS. The external repo is cloned at D:/tmp/harvest-{{params.slug}}; your cwd is the agentruntime monorepo. Focus: {{params.focus}}.\n\nMAP:\n{{nodes.map.result.reply}}\n\nThrough your lens (the clever algorithm, scoring, ranking, dedup, pipeline, or model-use that gives it its edge), find 2-4 TRANSFERABLE WINS for agentruntime's focus area. For EACH win:\n1. Read the actual cloned-repo code (cite file:line).\n2. HONESTY GATE: search OUR tree first — 'assume it exists until search proves otherwise' (chrono/task-graph were re-found). If we already have it, DROP or reframe as an improvement to ours (cite our file). Do NOT card what we already do.\n3. ROUTE: adopt-now | prototype | note | drop.\n4. CARD IT: JSON {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"external-repo-harvest\",\"payload\":{\"agent\":\"harvest-{{params.slug}}-technique\",\"source\":\"conversation\",\"collapse_key\":\"harvest-{{params.slug}}-technique\",\"title\":\"Harvest ({{params.slug}}/technique): <n> transferable win(s)\",\"why\":\"External-repo harvest, honesty-gated against our tree; for triage, NOT auto-adopted.\",\"note\":\"<one line per win: [route] title — THEIRS: repo/path:line — OURS: agentruntime/path (have?/gap) — value>\"}} then POST via curl to http://127.0.0.1:39827/emit-event; confirm genesis in observers.\n5. Reply with a compact digest (wins table + honest checked-and-dropped list + card confirmation).",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Lane 2 — novel-technique lens, honesty-gated against our tree." }
+    },
+    {
+      "id": "harvest-3",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are HARVESTER LANE 3 — LENS: INTERFACES, DX & PROTOCOLS. The external repo is cloned at D:/tmp/harvest-{{params.slug}}; your cwd is the agentruntime monorepo. Focus: {{params.focus}}.\n\nMAP:\n{{nodes.map.result.reply}}\n\nThrough your lens (its public API, SDK ergonomics, config surface, extension points, protocols, or how a user/agent drives it), find 2-4 TRANSFERABLE WINS for agentruntime. For EACH win:\n1. Read the actual cloned-repo code (cite file:line).\n2. HONESTY GATE: search OUR tree first — 'assume it exists until search proves otherwise' (chrono/task-graph were re-found). Drop or reframe anything we already have (cite our file).\n3. ROUTE: adopt-now | prototype | note | drop.\n4. CARD IT: JSON {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"external-repo-harvest\",\"payload\":{\"agent\":\"harvest-{{params.slug}}-interface\",\"source\":\"conversation\",\"collapse_key\":\"harvest-{{params.slug}}-interface\",\"title\":\"Harvest ({{params.slug}}/interface): <n> transferable win(s)\",\"why\":\"External-repo harvest, honesty-gated against our tree; for triage, NOT auto-adopted.\",\"note\":\"<one line per win: [route] title — THEIRS: repo/path:line — OURS: agentruntime/path (have?/gap) — value>\"}} then POST via curl to http://127.0.0.1:39827/emit-event; confirm genesis in observers.\n5. Reply with a compact digest (wins table + honest checked-and-dropped list + card confirmation).",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Lane 3 — interfaces/DX/protocol lens, honesty-gated against our tree." }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are the SYNTHESIS TIER of an external-repo harvest of {{params.slug}}. Three lane digests (each honesty-gated against our tree, wins carded to genesis):\n\n=== ARCH ===\n{{nodes.harvest-1.result.reply}}\n\n=== TECHNIQUE ===\n{{nodes.harvest-2.result.reply}}\n\n=== INTERFACE ===\n{{nodes.harvest-3.result.reply}}\n\nYour job is the ADOPTION VERDICT the lanes could not give: across all wins, pick the 1-3 that are genuinely worth agentruntime's effort GIVEN WHAT WE ALREADY HAVE, and rank them by value/effort. Confirm each in BOTH trees (theirs at D:/tmp/harvest-{{params.slug}}, ours in cwd) before recommending — a recommendation you did not verify is dropped, not hedged. Note any win that looks great in isolation but is redundant with an existing agentruntime capability (name the file). If NOTHING clears the bar, say so plainly — 'nothing worth adopting over what we have' is a legitimate, valuable result. Card your verdict to genesis (collapse_key \"harvest-{{params.slug}}-synthesis\", agent \"harvest-{{params.slug}}-synthesis\") via the emit-event curl; confirm genesis in observers.\n\nReply with: the ranked adoptions (each with THEIR ref, OUR gap, value/effort, first concrete step) or 'no adoptions clear the bar', plus one honest line on what you could not verify.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Cross-lane adoption verdict: the 1-3 wins worth adopting given what we already have, verified in both trees. No-adoption is a legitimate outcome." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "message": "🌱 [external-repo harvest: {{params.slug}}]\n\nMAP:\n{{nodes.map.result.reply}}\n\nARCH LANE:\n{{nodes.harvest-1.result.reply}}\n\nTECHNIQUE LANE:\n{{nodes.harvest-2.result.reply}}\n\nINTERFACE LANE:\n{{nodes.harvest-3.result.reply}}\n\nADOPTION VERDICT:\n{{nodes.synthesize.result.reply}}\n\nWins are on the genesis board (collapse_key harvest-{{params.slug}}-*) for triage — honesty-gated against our tree, NOT auto-adopted."
+      },
+      "meta": { "description": "Harvest summary back to the operator. Genesis holds the durable, triage-ready output." }
+    }
+  ],
+  "edges": [
+    { "from": "clone", "to": "map" },
+    { "from": "map", "to": "harvest-1" },
+    { "from": "map", "to": "harvest-2" },
+    { "from": "map", "to": "harvest-3" },
+    { "from": "harvest-1", "to": "synthesize" },
+    { "from": "harvest-2", "to": "synthesize" },
+    { "from": "harvest-3", "to": "synthesize" },
+    { "from": "synthesize", "to": "notify" }
+  ]
+}

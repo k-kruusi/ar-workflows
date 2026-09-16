@@ -1,0 +1,221 @@
+{
+  "id": "sample-select-ship",
+  "name": "Sample N in parallel → select → integrate → terminal verdict → PR (parallel-sampling alternative to review-gauntlet)",
+  "description": "THE HYPOTHESIS UNDER TEST, stated so a reader can refute it: arXiv 2607.28576 ('Sample More, Reflect Less') reports that at EQUAL TOKEN COST, self-refine / reflexion-style sequential revision loses to plain repeated sampling plus selection. `review-gauntlet` is a sequential revision loop (work → review → revise → review → revise). This definition is the same budget spent the other way: three INDEPENDENT coders attempt the task in parallel, each in its own worktree, each emitting a patch; two selectors with different lenses read the patches and pick; one integrator applies the winner and reconciles the critiques; then the SAME ship gate as review-gauntlet (terminal verdict on the FINAL artifact, fail-closed, PR as the human gate). NOBODY HAS READ THE PAPER — only its abstract, via the arxiv-monitor judge. Treat this as an experiment with a control, not an improvement. ||| WHY THE COST IS COMPARABLE (the whole point — a positive against a weak baseline is not a result, per issue #606 criterion 5 and packages/holo-trend/PRISM.md): review-gauntlet spends 3 coder turns (work + revise x2) and 3 judge turns (review x2 + confirm). This spends 3 coder turns (sample x3) and 3 judge turns (select x2 + confirm), plus 1 integrator turn and 1 deterministic prep. Node counts are 11 vs 11. The samplers run CONCURRENTLY (the engine executes each graph level under Promise.all — dependencies/task-graph/src/execute.ts:202), so wall-clock should drop by roughly the coder-turn serialization even if quality is a wash. THE WALL-CLOCK WIN IS STRUCTURAL AND DOES NOT DEPEND ON THE PAPER BEING RIGHT; the quality claim does, and must be measured. ||| MEASURE IT LIKE THIS: run both on the SAME task from the SAME base commit and compare tokens-to-completion, wall clock, and whether the terminal verdict APPROVEd on the first pass. Do not compare against a blind prompt — that is the weak baseline. ||| DIVERSITY IS DELIBERATELY UNSPICED, AND THERE ARE NO KNOBS. All three sampler prompts are BYTE-IDENTICAL and no node sets `model`, so every sampler is an independent draw from one policy diverging only by sampling temperature — which is what 'repeated sampling' means in the paper. Giving each sampler a different model or lens would very likely help, and would also confound the comparison, so it is deliberately ABSENT rather than defaulted-off. It cannot be an optional param here: this engine KEEPS THE LITERAL TEMPLATE TEXT when a path does not resolve (dependencies/task-graph/src/template.ts:16,22,35), so an unset `model: {{params.model_a}}` would hand the CLI the string '{{params.model_a}}' as a model name, and an unset lens would paste '{{params.lens_a}}' into a worker's prompt. A model-diverse version must therefore be a SEPARATE definition whose caller always supplies every model — the same reason divergent-reasoning-custom exists alongside divergent-reasoning. Add it only after this baseline comparison exists. ||| PARAMS: task (the work, with all specifics baked in); cwd (integration worktree — the winner is applied and shipped here); cwd_a, cwd_b, cwd_c (three sample worktrees, all off the SAME base as cwd); patchDir (a scratch dir OUTSIDE every worktree — prep asserts this, because samplers run `git add -A` and a patch dir inside a worktree would stage its own patch into its own diff); optional model_a/model_b/model_c, lens_a/lens_b/lens_c. ||| THE CALLER OWNS ISOLATION, unchanged from review-gauntlet: prepare four worktrees off one base and clean them up yourself, because a DAG cannot guarantee cleanup on failure. e.g. `git worktree add .worktrees/ssX-int <base> && git worktree add .worktrees/ssX-a <base> && ... && mkdir -p .patches/ssX`. ||| KNOWN GAP, NAMED RATHER THAN PAPERED OVER: there is no node type that deterministically picks 1-of-N. `review:verdict` parses only APPROVE/REJECT; `judge:score` parses a 0..1 and whispers a LIVE fleet agent, not an ephemeral one. So the winning patch is applied by the `integrate` AGENT (which reads the selectors' leading VARIANT-<X> token and runs `git apply` itself) rather than by deterministic code. That is a model doing a mechanical step, which is the weakest link in this graph. The fix is a `select:pick` node — parse a leading VARIANT-<X> into an index and a resolved patch path, fail-closed on an unrecognized token, exactly as review:verdict does for APPROVE/REJECT. Until that exists, `integrate` announces which patch it applied and the terminal judge re-reads the actual code, so a misapplied pick is caught at the gate rather than shipped. ||| FAN-IN IS FAILURE-TOLERANT ON PURPOSE: sample→select edges are `on: always`, so one dead sampler degrades the run to a 2-way choice instead of skipping the selectors and killing it (default edge behavior is `success` — dependencies/task-graph/src/execute.ts:31 — which would do the latter). Selectors read patches FROM DISK, not from interpolated node output, so a missing variant is a missing file: legible absence, not an empty string that reads like an empty patch. Zero surviving variants ⇒ SELECT-NONE ⇒ the gate fails the run.",
+  "nodes": [
+    {
+      "id": "prep",
+      "type": "core:exec",
+      "timeoutMs": 60000,
+      "params": {
+        "command": "node scripts/sample-select-prep.mjs --patch-dir {{params.patchDir}} --worktrees {{params.cwd_a}},{{params.cwd_b}},{{params.cwd_c}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Deterministic prep. Deletes stale variant-*.patch (a leftover from a prior run is indistinguishable from this run's output and would be judged and possibly shipped — issue #606's top failure mode), asserts patchDir sits outside every worktree, asserts every worktree exists, and refuses uninterpolated params. stdout is JSON: { ok, patchDir, cleared, worktrees } or { error }."
+      }
+    },
+    {
+      "id": "sample_a",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd_a}}",
+        "prompt": "You are completing a task in THIS directory — an isolated git worktree, so editing files here is safe and cannot affect anyone else's work. Other agents are attempting the SAME task independently in their own worktrees; you will never see their work and should not try to find it. Solve the task the way you think is best.\n\n=== TASK ===\n{{params.task}}\n\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nIf a change would violate NSP, fix the design rather than adding a soft fallback.\n\n=== WHEN YOU ARE DONE, EMIT YOUR PATCH ===\nDo NOT commit, push, or open a pull request. Instead run exactly:\n  git add -A\n  git diff --cached > {{params.patchDir}}/variant-a.patch\nThen verify the patch is non-empty (`wc -c` it). If it is empty, you changed nothing — say so explicitly rather than reporting success.\n\nReply with a SHORT summary: what you changed, why, which invariants you asserted and why they hold, and the byte size of your patch.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Sampler A — fresh session, own worktree. Prompt is byte-identical to samplers B and C (any difference confounds the comparison against review-gauntlet). Emits variant-a.patch."
+      }
+    },
+    {
+      "id": "sample_b",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd_b}}",
+        "prompt": "You are completing a task in THIS directory — an isolated git worktree, so editing files here is safe and cannot affect anyone else's work. Other agents are attempting the SAME task independently in their own worktrees; you will never see their work and should not try to find it. Solve the task the way you think is best.\n\n=== TASK ===\n{{params.task}}\n\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nIf a change would violate NSP, fix the design rather than adding a soft fallback.\n\n=== WHEN YOU ARE DONE, EMIT YOUR PATCH ===\nDo NOT commit, push, or open a pull request. Instead run exactly:\n  git add -A\n  git diff --cached > {{params.patchDir}}/variant-b.patch\nThen verify the patch is non-empty (`wc -c` it). If it is empty, you changed nothing — say so explicitly rather than reporting success.\n\nReply with a SHORT summary: what you changed, why, which invariants you asserted and why they hold, and the byte size of your patch.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Sampler B — fresh session, own worktree. Byte-identical prompt to A and C apart from its patch filename and optional lens/model."
+      }
+    },
+    {
+      "id": "sample_c",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd_c}}",
+        "prompt": "You are completing a task in THIS directory — an isolated git worktree, so editing files here is safe and cannot affect anyone else's work. Other agents are attempting the SAME task independently in their own worktrees; you will never see their work and should not try to find it. Solve the task the way you think is best.\n\n=== TASK ===\n{{params.task}}\n\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nIf a change would violate NSP, fix the design rather than adding a soft fallback.\n\n=== WHEN YOU ARE DONE, EMIT YOUR PATCH ===\nDo NOT commit, push, or open a pull request. Instead run exactly:\n  git add -A\n  git diff --cached > {{params.patchDir}}/variant-c.patch\nThen verify the patch is non-empty (`wc -c` it). If it is empty, you changed nothing — say so explicitly rather than reporting success.\n\nReply with a SHORT summary: what you changed, why, which invariants you asserted and why they hold, and the byte size of your patch.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Sampler C — fresh session, own worktree. Byte-identical prompt to A and B apart from its patch filename and optional lens/model."
+      }
+    },
+    {
+      "id": "select_correctness",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are an independent selector. Three agents independently attempted the same task, each in its own worktree, and each emitted a patch. Your job is to pick the ONE that best satisfies the task. You did not write any of them.\n\n=== TASK ===\n{{params.task}}\n\n=== THE CANDIDATE PATCHES ===\nRead these files:\n  {{params.patchDir}}/variant-a.patch\n  {{params.patchDir}}/variant-b.patch\n  {{params.patchDir}}/variant-c.patch\n\nA patch file that is MISSING or ZERO BYTES means that sampler failed or changed nothing. That is legible absence, not an empty solution — exclude it and say which ones were absent. Do NOT invent content for a missing variant, and do NOT treat a missing file as an error that stops you: judge whichever variants are present.\n\nYour working directory is the UNMODIFIED base tree — the same base all three patches were written against. Read the real files here to understand context, but note that NO patch has been applied, so line numbers inside a patch's added lines do not exist on disk yet. When you cite a location, cite either a real base-tree file:line, or `variant-X.patch` plus the hunk header. Do not fabricate post-application line numbers.\n\n=== YOUR LENS: CORRECTNESS AND COMPLETENESS ===\nJudge on: does it actually do what the task asked, completely, without breaking adjacent behavior? Does it handle the real cases? Is anything silently unimplemented? A patch that is elegant but incomplete loses to one that is plain and complete.\n\n=== REPLY FORMAT (strict) ===\nYour reply MUST BEGIN with exactly one token on its own line:\n  VARIANT-A   or   VARIANT-B   or   VARIANT-C   or   SELECT-NONE\nUse SELECT-NONE only if every present variant fails the task outright, or if zero variants are present.\nThen, in order:\n1. PRESENT: which variants existed and their sizes.\n2. WHY THIS ONE: two or three sentences.\n3. WHAT THE WINNER STILL GETS WRONG: a concrete list. This is the most valuable part of your reply — the integrator will fix these, so a vague list wastes the run. Be specific about file and location.\n4. WHAT THE LOSERS DID BETTER: anything in a rejected patch worth grafting onto the winner. Say NOTHING if there is nothing.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Selector 1 — FRESH session, read-only, correctness/completeness lens. Reads patches from DISK (not interpolated node output) so a failed sampler is a missing file rather than an empty string. Leads with VARIANT-A|B|C|SELECT-NONE. Its session is resumed later as the terminal ship gate."
+      }
+    },
+    {
+      "id": "select_discipline",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are a second independent selector, with a DIFFERENT lens from the first. Three agents independently attempted the same task, each in its own worktree, and each emitted a patch. You did not write any of them, and you have not seen the other selector's opinion.\n\n=== TASK (context only — completeness is the other selector's job, not yours) ===\n{{params.task}}\n\n=== THE CANDIDATE PATCHES ===\nRead these files:\n  {{params.patchDir}}/variant-a.patch\n  {{params.patchDir}}/variant-b.patch\n  {{params.patchDir}}/variant-c.patch\n\nA patch file that is MISSING or ZERO BYTES means that sampler failed or changed nothing — exclude it and say so. Do not invent content for a missing variant.\n\nYour working directory is the UNMODIFIED base tree. No patch has been applied, so cite either a real base-tree file:line or `variant-X.patch` plus its hunk header. Never fabricate post-application line numbers.\n\n=== YOUR LENS: CODE DISCIPLINE (skills/program_style.md + skills/assert_on.md) ===\nRank the variants on how they handle what they do not know. Concretely, penalise:\n- Hidden assumptions: ?? defaults, \"should always be set\" null guards, ?. on invariant paths that should be an assert\n- Silent wrong success: empty placeholders returned as ok, ignored isError/error flags, swallowed .catch(() => {})\n- Defensive code for cases that are impossible INSIDE the system boundary (should assert, or the design is wrong)\n- Assertion messages that say only \"required\" without stating WHY the invariant holds / its precondition source\n- Speculative try/catch or fallbacks with no evidence of a real edge case\n- Real races handled with bare throw-and-hope instead of documented defensive handling\nReward: loud precise failure over silent wrong success, asserts that state their precondition source, and surgical edits that touch only what the task needs.\n\n=== REPLY FORMAT (strict) ===\nYour reply MUST BEGIN with exactly one token on its own line:\n  VARIANT-A   or   VARIANT-B   or   VARIANT-C   or   SELECT-NONE\nThen:\n1. PRESENT: which variants existed.\n2. WHY THIS ONE, on discipline grounds: two or three sentences.\n3. DISCIPLINE DEFECTS IN EVERY PRESENT VARIANT, including your pick — concrete, with location. The integrator fixes these regardless of which patch wins, so list them for your pick even if it is the best of the three.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Selector 2 — FRESH session, read-only, NSP/assert discipline lens. Two selectors with different lenses rather than one, because CLAUDE.md holds that no single LLM is a clean grader gate (opus self-contradicted shot-to-shot, commit 873fab61) — and because their DISAGREEMENT is information the integrator can use, not a failure to resolve."
+      }
+    },
+    {
+      "id": "integrate",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are the integrator, working in THIS directory — an isolated git worktree at the base commit all candidate patches were written against. Three agents independently attempted a task; two selectors with different lenses then judged their patches.\n\n=== TASK ===\n{{params.task}}\n\n=== SELECTOR 1 (correctness and completeness lens) ===\n{{nodes.select_correctness.result.reply}}\n\n=== SELECTOR 2 (code-discipline lens) ===\n{{nodes.select_discipline.result.reply}}\n\n=== WHAT TO DO, IN THIS ORDER ===\n1. Read the leading token of each selector's reply. If SELECTOR 1 said SELECT-NONE, stop and reply exactly: INTEGRATION-ABORTED: selector 1 returned SELECT-NONE — <its stated reason>. Change nothing.\n2. Otherwise SELECTOR 1's pick is the base you apply. Selector 2's pick is ADVISORY: if the two disagree, still apply selector 1's patch, then treat everything selector 2 preferred about its own pick as a list of changes to make on top. Say explicitly in your reply that they disagreed and how you reconciled it.\n3. Apply the winning patch here: `git apply --index {{params.patchDir}}/variant-<x>.patch` (lowercase letter). If it does not apply cleanly, do NOT force it and do NOT hand-retype it from the diff — report the exact git error and reply INTEGRATION-FAILED: <error>. A patch that will not apply to its own base means something is wrong upstream and a human should look.\n4. State, on its own line, exactly which patch you applied: APPLIED: variant-<x>.patch\n5. NOW fix everything both selectors said is still wrong — selector 1's \"WHAT THE WINNER STILL GETS WRONG\", selector 2's discipline defects for the applied variant, and anything from \"WHAT THE LOSERS DID BETTER\" that is genuinely better. The patch is applied now, so re-read the REAL files and resolve every citation against the tree as it actually stands. Any selector citation that does not resolve, say so rather than guessing at what they meant.\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\n- System BOUNDARIES stay defensive; INSIDE them, assert load-bearing invariants rather than papering over with ?? defaults, silent coercions, ?. on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message stating WHY the invariant is true, not just that a value is required.\n- Loud precise failure over silent wrong success. No .catch(() => {}).\n- Real edge cases: handle AND document why. Speculative guards: remove.\n- Surgical edits only; match existing style.\n\nDo NOT commit, push, or open a pull request. Reply with: the APPLIED line, whether the selectors agreed, what you fixed on top and why, and any selector finding you deliberately did not act on with your reason.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Integrator — fresh session in the integration worktree. Applies the winning patch and reconciles both critiques against the APPLIED tree (which is why there is no review:anchor-check node in this graph: selector citations describe an unapplied patch, so resolving them against the base tree would flag correct citations as UNVERIFIED — a false-alarm machine. The integrator resolves them after applying, where they are actually resolvable). NOTE: this node reads the selectors' VARIANT-<X> token itself; that mechanical step wants a deterministic `select:pick` node and does not have one yet — see the workflow description."
+      }
+    },
+    {
+      "id": "confirm",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.select_correctness.result.sessionId}}",
+        "prompt": "You previously chose among three candidate patches for this task and listed what your pick still got wrong. An integrator has now applied a patch in the working directory and revised on top of it, addressing your findings and the second selector's. Their report:\n\n=== INTEGRATOR REPORT ===\n{{nodes.integrate.result.reply}}\n\nThe patch is APPLIED now, so the files on disk are the final artifact. Re-read the ACTUAL files — including every location you cited earlier, which will now resolve — and decide whether your findings were genuinely ADDRESSED IN THE CODE, not merely acknowledged in prose. Also confirm the integrator applied the variant you actually chose; if it applied a different one without a stated reconciliation, that alone is grounds to reject.\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT.\n- APPROVE only if every point you raised is resolved in the code AND the task is fully met AND code discipline holds.\n- If REJECT, state in one short paragraph exactly what is still wrong.\n\nThis verdict is the SHIP GATE. On REJECT nothing is committed, nothing is pushed, no pull request is opened, and your paragraph is what the human operator reads instead. On APPROVE your reply is quoted verbatim into the pull-request body.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Selector 1 --resumed for the TERMINAL verdict on the FINAL artifact. Resumed rather than fresh for the same reason review-gauntlet resumes judge C: it can check whether ITS OWN findings landed in code. Terminal because `integrate` is the last node that touches code — gating on a pre-integration verdict would be a stale gate that only LOOKS like it held."
+      }
+    },
+    {
+      "id": "verdict",
+      "type": "review:verdict",
+      "timeoutMs": 30000,
+      "params": {
+        "text": "{{nodes.confirm.result.reply}}"
+      },
+      "meta": {
+        "description": "Parses the terminal APPROVE/REJECT into a branchable boolean plus the reason. Fail-closed: an absent or unrecognized leading token THROWS rather than degrading to approved:true."
+      }
+    },
+    {
+      "id": "gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.verdict.result.approved}}"
+      },
+      "meta": {
+        "description": "THROWS on a blocking verdict, so a blocked run settles as \"failed\" rather than \"partial\". A gate wired only as an edge condition would leave `ship` merely SKIPPED — indistinguishable from any benign unfired branch, in every channel that reports status."
+      }
+    },
+    {
+      "id": "ship",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.integrate.result.sessionId}}",
+        "prompt": "The terminal judge returned APPROVE on the final state of the code. Now SHIP IT:\n1. Check what you changed: git status --short\n2. Land it — the ONLY approved path (mention asserted invariants or fail-loud honesty in the message if that was the point of the task):\n   bash $(git rev-parse --show-toplevel)/agentruntime/scripts/ship-guard.sh -m 'conventional message' <each changed path>\n   It refuses to push main/master, refuses to ship from the shared main checkout, and takes explicit paths only (there is no -A — a shared-index sweep steals other agents' in-flight work). If it REFUSES, STOP and report its message verbatim; do not route around it with raw git.\n3. Open a pull request against main. Do NOT use `gh pr create --fill` — that fills the body from your own commit message, so the selectors' verdicts never reach the human who merges. Write the body yourself. It MUST record, because this workflow is an experiment and the PR is its lab notebook:\n   - which variant was selected and by which lens\n   - whether the two selectors AGREED, and how disagreement was reconciled\n   - what was fixed on top of the winning patch\n   - the terminal verdict, quoted VERBATIM under a '## Terminal verdict (selector 1, resumed)' heading\n   - a '## Topology' line stating this was sample-select-ship (parallel sampling + selection), so the human comparing it against a review-gauntlet PR on the same task can tell which is which\n\n=== TERMINAL VERDICT ===\n{{nodes.confirm.result.reply}}\n\nReply with ONLY the resulting pull-request URL on a single line. If nothing changed and there is nothing to ship, reply exactly: NO-CHANGES.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Integrator --resumed. Runs ONLY on an approving terminal verdict. The PR body carries the topology label and the selector trail, because a PR from this workflow only has comparative value if a human can tell it apart from a review-gauntlet PR on the same task."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "prep",
+      "to": "sample_a"
+    },
+    {
+      "from": "prep",
+      "to": "sample_b"
+    },
+    {
+      "from": "prep",
+      "to": "sample_c"
+    },
+    {
+      "from": "sample_a",
+      "to": "select_correctness",
+      "on": "always"
+    },
+    {
+      "from": "sample_b",
+      "to": "select_correctness",
+      "on": "always"
+    },
+    {
+      "from": "sample_c",
+      "to": "select_correctness",
+      "on": "always"
+    },
+    {
+      "from": "sample_a",
+      "to": "select_discipline",
+      "on": "always"
+    },
+    {
+      "from": "sample_b",
+      "to": "select_discipline",
+      "on": "always"
+    },
+    {
+      "from": "sample_c",
+      "to": "select_discipline",
+      "on": "always"
+    },
+    {
+      "from": "select_correctness",
+      "to": "integrate"
+    },
+    {
+      "from": "select_discipline",
+      "to": "integrate",
+      "on": "always"
+    },
+    {
+      "from": "integrate",
+      "to": "confirm"
+    },
+    {
+      "from": "confirm",
+      "to": "verdict"
+    },
+    {
+      "from": "verdict",
+      "to": "gate"
+    },
+    {
+      "from": "gate",
+      "to": "ship"
+    }
+  ]
+}

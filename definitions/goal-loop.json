@@ -1,0 +1,254 @@
+{
+  "id": "goal-loop",
+  "name": "Goal loop — the outer judge loop",
+  "description": "OUTER of three levels. One run = one iteration. Everything here is a guard or an actuator; all judgment lives in the orchestrator's prompt one level down. It hands the iteration to orchestrator-turn, then MEASURES THE BAR ITSELF (never trusting the turn's account), and only spends a judge once the bar is green — a red bar short-circuits, because a smart seat on a broken build is the cheapest waste available. Judge says met: commit, push, flip the draft PR to ready, notify, stop. Not met: tail-spawn the next iteration ASYNC and settle, so this run ends while the loop lives. There is NO HUMAN in the loop until the goal passes. Params: goalId, iteration, goalStatement, settleConditions, cwd, barCommand, barCwd, runtimeRoot, paramsFile, maxIterations, sessionId, judgeSessionId, notifyAgent, prNumber, branch.",
+  "resultNode": "finish",
+  "nodes": [
+    {
+      "id": "orchestrate",
+      "type": "workflow:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "workflow": "orchestrator-turn",
+        "params": {
+          "goalId": "{{params.goalId}}",
+          "iteration": "{{params.iteration}}",
+          "maxIterations": "{{params.maxIterations}}",
+          "orchestratorModel": "{{params.orchestratorModel}}",
+          "workerModel": "{{params.workerModel}}",
+          "goalStatement": "{{params.goalStatement}}",
+          "cwd": "{{params.cwd}}",
+          "barCommand": "{{params.barCommand}}",
+          "barCwd": "{{params.barCwd}}",
+          "runtimeRoot": "{{params.runtimeRoot}}",
+          "sessionId": "{{params.sessionId}}"
+        }
+      },
+      "meta": {
+        "why": "Nesting is correct at this seam (depth 1). The turn is not a loop, so nothing accumulates depth; iteration-to-iteration uses an HTTP tail-spawn instead."
+      }
+    },
+    {
+      "id": "bar",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "{{params.barCommand}}",
+        "cwd": "{{params.barCwd}}",
+        "maxOutputBytes": 60000
+      },
+      "meta": {
+        "why": "The independent measurement. Reached on an always-edge so a thrown turn is still measured rather than assumed. Costs zero tokens and grounds every decision below it."
+      }
+    },
+    {
+      "id": "judge_gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.bar.result.ok}}"
+      },
+      "meta": {
+        "why": "core:exec REPORTS, core:gate ACTUATES — a non-zero exit leaves the exec node 'completed', so without this the red path never fires. Red bar means the judge is never reached."
+      }
+    },
+    {
+      "id": "judge",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{params.judgeSessionId}}",
+        "conventions": "off",
+        "skills": "skills/claims_carry.md",
+        "capabilities": "fs.read",
+        "prompt": "You are the JUDGE of an autonomous goal loop, iteration {{params.iteration}}. You did not do the work and you never see the builder's account — only the artifact and the bar. There is no human to defer to; your verdict is what decides whether this ships.\n\n=== THE GOAL ===\n{{params.goalStatement}}\n\n=== SETTLE CONDITIONS — all must hold ===\n{{params.settleConditions}}\n\n=== THE BAR, MEASURED INDEPENDENTLY JUST NOW ===\nexit={{nodes.bar.result.exitCode}} ok={{nodes.bar.result.ok}}\n{{nodes.bar.result.stdout}}\n\n=== YOUR JOB ===\nA green bar does NOT mean the goal is met. A bar measures compliance, not correctness, and green bars have repeatedly coexisted with real defects. READ THE ACTUAL CODE in {{params.cwd}} (you have read/grep/glob) and decide whether every settle condition genuinely holds — in particular whether the change is a real fix or a shape that satisfies the assertions (special-casing the bar's literal strings, weakening an unrelated path, deleting behaviour instead of classifying it).\n\nAnswer with the structured verdict object. goalMet is the load-bearing field: set it true ONLY if every settle condition is genuinely satisfied. A green bar does NOT by itself mean the goal is met - a bar measures compliance, not correctness. notInspected is equally load-bearing: the loop acts on your denominator, so a judge claiming coverage it did not have is worse than one judging harshly.",
+        "workerProfile": "seat-deepseek",
+        "schema": "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"goalMet\",\"verdict\",\"reason\",\"biggestGap\",\"notInspected\"],\"properties\":{\"goalMet\":{\"type\":\"boolean\",\"description\":\"true ONLY if every settle condition is genuinely satisfied\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"APPROVE\",\"ESCALATE\"]},\"reason\":{\"type\":\"string\",\"minLength\":1},\"biggestGap\":{\"type\":\"string\",\"minLength\":1,\"description\":\"the single most valuable thing to do next, specific enough to act on\"},\"notInspected\":{\"type\":\"string\",\"minLength\":1,\"description\":\"what you could NOT check, and why - the loop acts on your denominator\"}}}",
+        "schemaRetries": 3
+      },
+      "meta": {
+        "why": "deepseek-v4-pro via seat-deepseek, a ROUTE PROFILE — cartridges/seat-deepseek/ is a workspace.json and nothing else: no process, no port, not in agentruntime.json, unstartable by construction. This node does NOT message a chat agent and never did: workerProfile is a FILE READ (resolveWorkerProfileEnv reads the profile's env block, keeps the WORKER_PROFILE_ENV_KEYS allowlist, scopes the token to this one spawn, and rewrites the lane to /c/<name>@worker so the traffic is not filed under a conversation). It previously named deepseek-dorian, a chat agent, and that was the defect — not leakage, but that a definition naming a person's conversation READS like it whispers one, which cost multiple agents and one operator a day of re-explanation. Chat agents are Kevin's persistent conversations; an agent has no sense of elapsed time, so a conversation resumed days later has no idea a workflow it never launched is about to speak into it. The ONLY channel from this loop to a chat agent is the agent:notify on completion. Everything else is ephemeral. Still cross-family from the Claude orchestrator (clause 3 independence) but on the claude transport, so reply is the FINAL message only. grok-4.5 was tried first and its NDJSON scrape concatenates narration frames into reply, so the leading token was never the verdict and the fail-closed parser discarded two otherwise-good verdicts. Read-only: a judge that can write can make its own verdict true. Schema-validated (instructor pattern): a non-conforming reply is fed its own validation errors and retried in-session, so an unparseable verdict is RECOVERABLE rather than terminal - the failure that stopped iteration 3 on 2026-08-10."
+      }
+    },
+    {
+      "id": "settle_gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.judge.result.structured.goalMet}}"
+      },
+      "meta": {
+        "why": "Reads the schema-validated boolean directly. A lone template resolves to the RAW value with its type preserved, so this is a real boolean, not the string \"true\"."
+      }
+    },
+    {
+      "id": "land",
+      "type": "core:exec",
+      "timeoutMs": 600000,
+      "params": {
+        "command": "node \"{{params.runtimeRoot}}/scripts/goal-loop-land.mjs\" --cwd \"{{params.cwd}}\" --branch \"{{params.branch}}\" --pr \"{{params.prNumber}}\" --goal \"{{params.goalId}}\" --iteration \"{{params.iteration}}\"",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Commits the loop's work, pushes the branch, and flips the DRAFT PR to ready-for-review. Only reachable once the bar is green AND the judge approved — the PR becomes reviewable exactly when the goal is met, never before."
+      }
+    },
+    {
+      "id": "notify_met",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop {{params.goalId}}] GOAL MET at iteration {{params.iteration}}.\nbranch: {{params.branch}}   pr: {{params.prNumber}}  (blank = no PR was configured for this goal)\nJudge: {{nodes.judge.result.structured.reason}}\ngap: {{nodes.judge.result.structured.biggestGap}}\nnotInspected: {{nodes.judge.result.structured.notInspected}}\nBar: exit={{nodes.bar.result.exitCode}} ok={{nodes.bar.result.ok}}\nland: {{nodes.land.result.stdout}}"
+      },
+      "meta": {
+        "why": "always:true (agent:notify no-ops on a sync run and this caller is a machine). The message states the branch and lets land report what it DID rather than asserting PR readiness — templates have no conditionals, so a claim that is only true when prNumber is set will ship as a falsehood when it is not. Observed 2026-08-10: \"PR # is now READY FOR REVIEW\"."
+      }
+    },
+    {
+      "id": "spawn_red",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "node scripts/goal-loop-note.mjs --cid {{run.correlationId}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --runtime-root \"{{params.runtimeRoot}}\" && node scripts/goal-loop-spawn.mjs --workflow goal-loop --params-file \"{{params.paramsFile}}\" --mode async --set iteration={{params.iteration}} --session \"{{nodes.orchestrate.result.sessionId}}\" --counter iteration --max {{params.maxIterations}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Bar still red: next iteration, no judge spent. A SEPARATE node from spawn_more because multiple incoming edges AND together — one shared spawn node would silently skip whenever either gate took the other branch. Threads the LIVE iteration via --set: goal-loop-spawn reads its counter from the params FILE, which is static (iteration=1 forever), so without this the counter never climbs past 2, the maxIterations ceiling is inert, and the loop only stops by an accidental 409 when the async spawn races the still-running parent. Verified 2026-08-10 on the first-ever tail-spawn (brake-test-01). NOTE-THEN-SPAWN: goal-loop-note writes this iteration's bar output, judge verdict and source fingerprint into <cwd>/.goal/LOOP-LOG.md BEFORE the child is started, so the child can read it. It always exits 0 — a logging failure must never stop the loop from iterating, which is why && is safe here. --session resumes the orchestrator's own session in the child: the worktree stays the durable memory (compaction can eat a session; the loop must survive that), and continuity is the cache/cost optimisation layered on top, never the thing depended on."
+      }
+    },
+    {
+      "id": "spawn_more",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "node scripts/goal-loop-note.mjs --cid {{run.correlationId}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --runtime-root \"{{params.runtimeRoot}}\" && node scripts/goal-loop-spawn.mjs --workflow goal-loop --params-file \"{{params.paramsFile}}\" --mode async --set iteration={{params.iteration}} --session \"{{nodes.orchestrate.result.sessionId}}\" --counter iteration --max {{params.maxIterations}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Bar green but the judge refused: another iteration. ASYNC tail-spawn, so this run settles and ends while the loop stays alive. Exit 3 = iteration ceiling, which settles rather than fails — and that ceiling is the ONLY brake, since an HTTP spawn is outside the engine's depth backstop. Threads the LIVE iteration via --set: goal-loop-spawn reads its counter from the params FILE, which is static (iteration=1 forever), so without this the counter never climbs past 2, the maxIterations ceiling is inert, and the loop only stops by an accidental 409 when the async spawn races the still-running parent. Verified 2026-08-10 on the first-ever tail-spawn (brake-test-01). NOTE-THEN-SPAWN: goal-loop-note writes this iteration's bar output, judge verdict and source fingerprint into <cwd>/.goal/LOOP-LOG.md BEFORE the child is started, so the child can read it. It always exits 0 — a logging failure must never stop the loop from iterating, which is why && is safe here. --session resumes the orchestrator's own session in the child: the worktree stays the durable memory (compaction can eat a session; the loop must survive that), and continuity is the cache/cost optimisation layered on top, never the thing depended on."
+      }
+    },
+    {
+      "id": "spawn_unreadable",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "node scripts/goal-loop-note.mjs --cid {{run.correlationId}} --cwd \"{{params.cwd}}\" --iteration {{params.iteration}} --runtime-root \"{{params.runtimeRoot}}\" && node scripts/goal-loop-spawn.mjs --workflow goal-loop --params-file \"{{params.paramsFile}}\" --mode async --set iteration={{params.iteration}} --session \"{{nodes.orchestrate.result.sessionId}}\" --counter iteration --max {{params.maxIterations}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "Reached when the judge FAILS - which now means the schema retry loop was exhausted, not that one reply was malformed. Threads the LIVE iteration via --set: goal-loop-spawn reads its counter from the params FILE, which is static (iteration=1 forever), so without this the counter never climbs past 2, the maxIterations ceiling is inert, and the loop only stops by an accidental 409 when the async spawn races the still-running parent. Verified 2026-08-10 on the first-ever tail-spawn (brake-test-01). NOTE-THEN-SPAWN: goal-loop-note writes this iteration's bar output, judge verdict and source fingerprint into <cwd>/.goal/LOOP-LOG.md BEFORE the child is started, so the child can read it. It always exits 0 — a logging failure must never stop the loop from iterating, which is why && is safe here. --session resumes the orchestrator's own session in the child: the worktree stays the durable memory (compaction can eat a session; the loop must survive that), and continuity is the cache/cost optimisation layered on top, never the thing depended on."
+      }
+    },
+    {
+      "id": "notify_broken",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "always": true,
+        "condense": true,
+        "message": "[goal-loop {{params.goalId}}] ABORTED at iteration {{params.iteration}} — the BAR ITSELF is broken (exit 2, refusing to grade). The sim is NOT the problem; the instrument is. NOT iterating — a broken bar fed to the repair arc would loop forever fixing a sim that is fine. Fix the bar, then re-fire.\nbar stdout: {{nodes.bar.result.stdout}}\nbar stderr: {{nodes.bar.result.stderr}}"
+      },
+      "meta": {
+        "why": "Exit 2 is the bar declaring ITSELF broken (fable-5 convention, verified in bar-hollowtide-t001.mjs self-test). It must abort the round and surface, NEVER feed the repair arc: a red bar (exit 1) means fix the sim; a broken bar (exit 2) means fix the INSTRUMENT, and iterating on it burns rounds forever on a fine sim. judge_gate already fails on any non-zero exit; the conditioned edges below split exit-2 (here) from exit-1 (spawn_red)."
+      }
+    },
+    {
+      "id": "finish",
+      "type": "core:noop",
+      "timeoutMs": 30000,
+      "params": {},
+      "meta": {
+        "why": "Single terminal on always-edges from every branch, so the run always resolves exactly one resultNode whichever path fired."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "orchestrate",
+      "to": "bar",
+      "on": "always"
+    },
+    {
+      "from": "bar",
+      "to": "judge_gate",
+      "on": "success"
+    },
+    {
+      "from": "judge_gate",
+      "to": "judge",
+      "on": "success"
+    },
+    {
+      "from": "judge_gate",
+      "to": "spawn_red",
+      "on": "failure",
+      "condition": "nodes.bar.result.exitCode !== 2"
+    },
+    {
+      "from": "settle_gate",
+      "to": "land",
+      "on": "success"
+    },
+    {
+      "from": "settle_gate",
+      "to": "spawn_more",
+      "on": "failure"
+    },
+    {
+      "from": "land",
+      "to": "notify_met",
+      "on": "success"
+    },
+    {
+      "from": "notify_met",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "spawn_red",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "spawn_more",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "spawn_unreadable",
+      "to": "finish",
+      "on": "always"
+    },
+    {
+      "from": "judge",
+      "to": "settle_gate",
+      "on": "success"
+    },
+    {
+      "from": "judge",
+      "to": "spawn_unreadable",
+      "on": "failure"
+    },
+    {
+      "from": "judge_gate",
+      "to": "notify_broken",
+      "on": "failure",
+      "condition": "nodes.bar.result.exitCode === 2"
+    },
+    {
+      "from": "notify_broken",
+      "to": "finish",
+      "on": "always"
+    }
+  ]
+}

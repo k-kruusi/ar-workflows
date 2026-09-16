@@ -1,0 +1,48 @@
+{
+  "id": "skill-propose",
+  "name": "Skill proposer → genesis inbox",
+  "description": "§3.3 of papers/research/em-wikiskill-absorption.md — the WikiSkill Proposer, composed from existing primitives. gather (core:exec) collects the knowledge-intervention ledger (skill-impact recent), the EM staged/quarantined pipeline, and the skills index; propose (agent:run, fs.read+fs.write only — NO shell, so it cannot run commands on the live shared tree) reads that context and writes ONE atomic proposal {action:create|patch|noop, target, patch, rationale, evidenceRefs} to data/skill-impact/proposals/<cid>.json; emit (core:exec) turns a non-noop proposal into a genesis INBOX card mechanically (no LLM in the card-write) and records a graduation intervention so the next proposer doesn't re-litigate it; notify reports back. NOTHING is auto-landed into skills/ — a human graduates the inbox card (§6.2, Kevin's confirmed default). Params: `agent` (who to notify), `cwd` (monorepo root for the proposer), optional `supervisor` (default http://localhost:39827). A `noop` outcome files no card and is a first-class honest result.",
+  "nodes": [
+    {
+      "id": "gather",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "echo '=== IMPACT LEDGER (recent 40 interventions — read this FIRST) ==='; npx --no-install tsx dependencies/skill-impact/src/cli.ts recent 40 2>&1; echo; echo '=== EXPERIENCE-MEMORY PIPELINE (staged / quarantined) ==='; npx --no-install tsx packages/experience-memory/src/cli.ts yield 2>&1; echo; echo '=== SKILLS INDEX (name + trigger lines) ==='; grep -rn '^name:\\|^when-to-use:' skills/ 2>/dev/null | head -160"
+      }
+    },
+    {
+      "id": "propose",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read,fs.write",
+        "conventions": "auto",
+        "prompt": "You are the colony's SKILL PROPOSER (WikiSkill Proposer, §3.3 of papers/research/em-wikiskill-absorption.md). Your job: read the knowledge-intervention ledger and the experience-memory pipeline, and propose AT MOST ONE atomic change to the skills/ library. You do NOT edit skills/ — you write a single proposal file that a human reviews in the genesis inbox and graduates or drops.\n\nHARD RULES:\n1. Bias hard toward NOOP. Only propose when the ledger shows a RECURRENT, GROUNDED pattern — e.g. a skill file churned repeatedly (multiple skill-edit records) with no consolidating change; a mutate-tip pattern that should become a durable skill; a cluster of em-verdicts pointing at a missing convention. If nothing is well-grounded in the evidence below, action=\"noop\".\n2. Ground EVERY non-noop proposal in SPECIFIC evidence from the ledger below — cite the actual intervention refs/targets or correction ids in evidenceRefs. No concrete evidence → noop. Do not invent a pattern to have something to say (read skills/fluency_is.md — manufactured confidence is the failure mode here).\n3. Propose ONE thing. create = a new skill file; patch = a change to an existing one; noop = nothing worth a human's attention this round.\n4. Do NOT re-propose something the ledger already shows as a `graduation` intervention (origin skill-propose:<target>) — that was already filed; re-litigating it is the exact waste this system exists to prevent.\n\nOUTPUT: write EXACTLY ONE JSON object, and NOTHING else, to this exact path:\n  data/skill-impact/proposals/{{run.correlationId}}.json\nShape:\n  {\n    \"action\": \"create\" | \"patch\" | \"noop\",\n    \"target\": \"skills/<name>.md\"   (the file to create/patch; omit or \"\" for noop),\n    \"rationale\": \"why, in 2-4 sentences, tied to the evidence\",\n    \"patch\": \"the proposed new content (create) or a concrete description of the change (patch); omit for noop\",\n    \"evidenceRefs\": [\"skill-impact:<ref>\", \"corr:<id>\", ...]\n  }\nDo NOT write to any other path. Do NOT edit any skill file. Write only that one JSON file. After writing it, reply with a one-line summary of what you proposed (or that you chose noop and why).\n\n=== EVIDENCE (ledger + EM pipeline + skills index) ===\n{{nodes.gather.result.stdout}}"
+      }
+    },
+    {
+      "id": "emit",
+      "type": "core:exec",
+      "timeoutMs": 60000,
+      "params": {
+        "command": "node scripts/skill-propose-emit.mjs data/skill-impact/proposals/{{run.correlationId}}.json --supervisor {{params.supervisor}}"
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "skill-propose finished (run {{run.correlationId}}).\nProposer said: {{nodes.propose.result.reply}}\n\nemit ok={{nodes.emit.result.ok}} exit={{nodes.emit.result.exitCode}}\n{{nodes.emit.result.stdout}}\n{{nodes.emit.result.stderr}}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "gather", "to": "propose" },
+    { "from": "propose", "to": "emit" },
+    { "from": "emit", "to": "notify" }
+  ]
+}

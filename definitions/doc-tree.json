@@ -1,0 +1,24 @@
+{
+  "id": "doc-tree",
+  "name": "URL → document-tree",
+  "resultNode": "run",
+  "description": "Give a URL of content (paper, article, YouTube video), get back a document-tree: a deterministic node skeleton over typed spans, stored content-addressed under docs-cache/<hash>/ with the raw (potentially adversarial) source beside it. Consume what you want — tree.jsonl carries every node's span so the verbatim text is one read away. Params: url (required), agent (who to notify), budget (L0 lines, default 120), lang (youtube captions, default en). KNOWN LIMIT: core:exec runs cmd.exe, so a URL containing & or | must be passed bare-host (e.g. youtu.be/<id> works; ?si=... query tails do not).",
+  "nodes": [
+    {
+      "id": "run",
+      "type": "core:exec",
+      "params": { "command": "npx tsx packages/doc-tree/src/cli.ts {{params.url}} --budget {{params.budget}} --lang {{params.lang}}" },
+      "timeoutMs": 600000
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "doc-tree finished — ok={{nodes.run.result.ok}} exit={{nodes.run.result.exitCode}}\nurl: {{params.url}}\n\n{{nodes.run.result.stdout}}"
+      }
+    }
+  ],
+  "edges": [{ "from": "run", "to": "notify" }]
+}

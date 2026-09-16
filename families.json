@@ -1,0 +1,44 @@
+{
+  "families": {
+    "review": {
+      "name": "Review",
+      "description": "Multi-judge adversarial review with session continuity and anchor-checked citations. For implementing and reviewing code changes.",
+      "workflows": ["review-gauntlet"]
+    },
+    "design": {
+      "name": "Design",
+      "description": "Adversarial design: propose, cross-critique, synthesize a vetted spec. For turning a fuzzy goal into a concrete plan.",
+      "workflows": ["adversarial-design", "adversarial-design-v2", "adversarial-design-receipts", "adversarial-design-opus-grok", "adversarial-design-grok-4.5", "adversarial-design-six-family", "task-master"]
+    },
+    "improvement": {
+      "name": "Improvement",
+      "description": "Self-improvement cycles: select targets, curate findings, synthesize cross-cutting seams, card to genesis. Read-only analysis; no auto-fix.",
+      "workflows": ["improvement-cycle", "improvement-cycle-grok-4.5"]
+    },
+    "research": {
+      "name": "Research",
+      "description": "Fan-out research: decompose a question, parallel explorers, synthesize findings. For answering questions that need multiple angles.",
+      "workflows": ["research-swarm", "research-swarm-coverage", "web-signal-harvest"]
+    },
+    "reasoning": {
+      "name": "Divergent Reasoning",
+      "description": "Multi-runtime design-to-PR: different weight families propose independently, judge picks, implement, review, ship.",
+      "workflows": ["divergent-reasoning", "divergent-reasoning-custom"]
+    },
+    "ticket": {
+      "name": "Ticket Factory",
+      "description": "Isolated worktree-based ticket implementation with gates and review.",
+      "workflows": ["ticket-factory", "ticket-factory-iso", "sample-select-ship", "plan-arbiter", "quick-fix"]
+    },
+    "ops": {
+      "name": "Operations",
+      "description": "Session management, log compaction, dormant sweeps, exec-notify, panel fixes, skill evolution, monitoring, and other operational workflows.",
+      "workflows": ["new-session", "new-session-oriented", "exec-notify", "log-compaction", "dormant-sweep", "skill-evolution", "atlas-orient", "ask-resume", "em-slice-build", "panel-remote-fix", "veto-inline", "external-repo-harvest", "doc-tree", "review-panel", "grok-smoke", "genome-beat", "hn-monitor", "arxiv-monitor"]
+    },
+    "routing": {
+      "name": "Routing",
+      "description": "Task→seat routing: deterministic envelope selection (tier, borrowed seat, reviewer, gate policy) before gauntlet dispatch. Inference seam: cognitive-router (:3068) when up.",
+      "workflows": ["task-route"]
+    }
+  }
+}

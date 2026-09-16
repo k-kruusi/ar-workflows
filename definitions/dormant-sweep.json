@@ -1,0 +1,81 @@
+{
+  "id": "dormant-sweep",
+  "name": "Dormant sweep — mechanical scan for unwired work, then adversarial triage",
+  "description": "Finds code that was BUILT and then not wired in, across src/ + packages/ + dependencies/ (2,181 tracked source files). Deliberately two-phase: node 1 is `scripts/dormant-scan.mjs`, a deterministic detector (orphan-module / test-only-module / dead-export / orphan-package) that costs zero tokens and has full recall over the corpus; the agent lanes only CLASSIFY its candidates. The distinction that matters is abandoned vs dormant-on-purpose, and only the second half needs a model. Each lane must adversarially REFUTE its own 'abandoned' calls before reporting — dynamic import(), string-keyed dispatch (workflow node `type`, event tags) and path-invoked entrypoints are all invisible to the scanner, so a clean grep is NOT proof of disuse. Mirrors improvement-cycle's proven select->lanes->synthesize->notify topology rather than inventing one. Params: scope (src|packages|dependencies, omit for all), curatorModel, notify.",
+  "nodes": [
+    {
+      "id": "scan",
+      "type": "core:exec",
+      "timeoutMs": 600000,
+      "params": {
+        "command": "node scripts/dormant-scan.mjs {{params.scopeFlag}} --json D:/tmp/dormant-sweep-candidates.json"
+      }
+    },
+    {
+      "id": "triage-orphans",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are TRIAGE LANE 1 of a dormant sweep. A mechanical detector has already done the finding; you are doing the JUDGING. Do not re-scan the tree.\n\nRead D:/tmp/dormant-sweep-candidates.json. Take ONLY findings whose signal is \"orphan-module\" or \"orphan-package\". Work the 8 largest by `loc` (biggest first — a 500-line orphan matters more than a 20-line one).\n\nScanner output here:\n{{nodes.scan.result.stdout}}\n\nFor EACH candidate you take, classify it into exactly one of:\n  ABANDONED         — built, then left disconnected. Nothing reaches it and nothing plans to.\n  DORMANT-BY-DESIGN — deliberately staged ahead of use, or gated off on purpose. Cite the comment/doc/flag that says so.\n  FALSE-POSITIVE    — actually reachable. Say HOW it is reached.\n\nBEFORE you may write ABANDONED you must actively try to REFUTE it. The scanner cannot see:\n  - dynamic import()/require() built from a variable\n  - string-keyed dispatch: workflow node `type` fields, event-bus tags, MCP tool names, registry keys\n  - entrypoints invoked by PATH: bins, panel bundles, scripts the supervisor spawns, schtasks/cmd files\n  - re-exports through a barrel index.ts under a different name\nGrep the bare symbol AND the file's basename as a plain string across the tree, and check package.json bin/scripts. A clean import-grep is NOT proof of disuse. If you cannot refute it, say what you tried.\n\nOutput one block per candidate:\n  PATH: <repo-relative>\n  VERDICT: ABANDONED | DORMANT-BY-DESIGN | FALSE-POSITIVE\n  EVIDENCE: <file:line you actually read, or the exact command you ran and its result>\n  REFUTATION ATTEMPTED: <what you searched for that would have proven it alive>\n  RECOMMEND: wire it | delete it | leave it (staged) | no action (false positive)\n\nHonest-empty is a valid result. If a candidate is genuinely ambiguous, say AMBIGUOUS and name what a human would need to check. Never pad, never guess a verdict to fill the shape."
+      }
+    },
+    {
+      "id": "triage-testonly",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are TRIAGE LANE 2 of a dormant sweep, and you have the sharpest signal in the run.\n\nRead D:/tmp/dormant-sweep-candidates.json and take ONLY findings whose signal is \"test-only-module\": modules imported by their own tests but by NO production module. That combination means someone built it, PROVED IT WORKS, and never wired it in — which is the signature of work abandoned at the last step, not work that was never finished.\n\nScanner output here:\n{{nodes.scan.result.stdout}}\n\nCALIBRATE ON THE FALSE FRIEND, because this signal's failure mode is confident and specific. src/workflows/nodes/agent-run-fraud.ts exports verifyMechanical imported only by its own test; agent-run-gate.ts and agent-run-escrow.ts name it in COMMENTS and never call it. By every mechanical measure it reads ABANDONED. It is not: papers/agentruntime/plans/base-node.md §7 step 2 names it verbatim as rung 2's scope, to be built BEFORE the collectors and escrow that consume it. The shipped state IS the spec. That refutation came from another agent AFTER the finding was reported as a true positive — do not repeat it.\n\nTHE DISCRIMINATOR: does an adjudicated design doc schedule this module for a later step? The scanner now checks papers/**/*.md for you and stamps `plannedIn` on any candidate a design doc names — treat that as a strong prior toward DORMANT-BY-DESIGN and go read the cited section. Note it is an annotation, NOT a verdict: a plan-named module can still be genuinely abandoned if its plan died, so check whether the plan is live. Conversely, ABSENCE of a plan mention is not proof of abandonment — logs (HUDDLE.md, .EVOLVE.md) are deliberately excluded from that index, so an undocumented-but-intentional module will look unplanned.\n\nFor each, classify ABANDONED / DORMANT-BY-DESIGN / FALSE-POSITIVE with the same refutation duty as lane 1 (see below), and additionally answer the question that makes this signal actionable:\n  WHAT WAS IT FOR? — read the module's scent header, its docstring and its test names, and state in one sentence what it was built to do.\n  WHAT WOULD WIRING IT COST? — name the specific call site that should have called it, or say you could not find one.\n\nREFUTATION DUTY: before writing ABANDONED, actively try to prove it alive. The scanner is blind to dynamic import(), string-keyed dispatch (workflow node `type`, event tags, registry keys), path-invoked entrypoints (bins, panel bundles, scripts), and barrel re-exports. Grep the symbol AND the basename as a plain string. A clean import-grep is not proof.\n\nOutput per candidate: PATH / VERDICT / WHAT IT WAS FOR / WHAT WIRING COSTS / EVIDENCE (file:line you read) / REFUTATION ATTEMPTED / RECOMMEND.\n\nHonest-empty beats padding. AMBIGUOUS is a real verdict — use it rather than guessing."
+      }
+    },
+    {
+      "id": "triage-exports",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are TRIAGE LANE 3 of a dormant sweep, and your signal is the NOISIEST — treat it with proportionate suspicion.\n\nRead D:/tmp/dormant-sweep-candidates.json and take ONLY findings whose signal is \"dead-export\": an exported symbol whose name occurs exactly ONCE in the whole corpus, its own declaration.\n\nScanner output here:\n{{nodes.scan.result.stdout}}\n\nWhy this signal is noisy, and what you must therefore rule out first:\n  - exported TYPES and INTERFACES are frequently declared for a public API surface and used only structurally — not a defect\n  - a symbol re-exported through a barrel may be consumed under a different name\n  - a symbol referenced only in a string (config key, event tag, tool name) is invisible to a token count\n  - a deliberately-public library export has no in-tree caller BY DESIGN — a dependencies/ package exporting for consumers is not dead\n\nSo: group your candidates. Do not produce 77 verdicts. Produce a small number of CLUSTERS that share a cause, and for each cluster give one representative you actually verified at file:line. Prefer 5 well-evidenced clusters to 40 thin verdicts.\n\nFor each cluster: CLUSTER (what these have in common) / MEMBERS (paths) / VERDICT / EVIDENCE (the representative, file:line you read) / RECOMMEND.\n\nCall out explicitly any cluster where the SCANNER ITSELF is at fault — a heuristic that systematically mis-flags a legitimate pattern is a more valuable finding than any individual symbol, because it improves every future run. Name the heuristic and the fix."
+      }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are the SYNTHESIS lane of a dormant sweep. Three triage lanes have classified a mechanical scan's candidates.\n\nLANE 1 (orphan modules/packages):\n{{nodes.triage-orphans.result.reply}}\n\nLANE 2 (test-only modules — built, tested, never wired):\n{{nodes.triage-testonly.result.reply}}\n\nLANE 3 (dead exports, clustered):\n{{nodes.triage-exports.result.reply}}\n\nProduce a report for a human operator, in this order:\n\n1. HEADLINE — the single most valuable thing found, in one sentence, with its file path.\n2. WIRE THESE — items where something finished exists and a specific call site is missing. Ranked by (value already built) / (cost to wire). This is the section that pays for the run; put real effort into the ordering and say WHY each ranks where it does.\n3. DELETE CANDIDATES — genuinely abandoned, nothing depends on them. Give the LOC reclaimed. Flag anything you are less than confident about; a wrong delete is far more expensive than a missed one.\n4. LEAVE ALONE — dormant-by-design, with the evidence that it is deliberate.\n5. SCANNER DEFECTS — heuristics that mis-fire, with the fix. This improves every future run and is worth more than any single finding.\n6. WHAT THIS SWEEP COULD NOT SEE — be specific and honest. The scanner cannot see dynamic dispatch or runtime wiring, so state which areas of the tree this method is structurally blind to.\n\nRULES: every claim in sections 2-4 carries a file:line the lane actually read, or it does not appear. Cross-lane contradictions get named, not silently resolved. If a lane returned honest-empty, report that as a result rather than filling the gap. Do not recommend deleting anything a lane marked AMBIGUOUS."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "message": "🔍 Dormant sweep complete{{params.scopeFlag}}\n\n{{nodes.synthesize.result.reply}}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "scan", "to": "triage-orphans" },
+    { "from": "scan", "to": "triage-testonly" },
+    { "from": "scan", "to": "triage-exports" },
+    { "from": "triage-orphans", "to": "synthesize" },
+    { "from": "triage-testonly", "to": "synthesize" },
+    { "from": "triage-exports", "to": "synthesize" },
+    { "from": "synthesize", "to": "notify" }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "id": "ticket-factory-iso",
+  "name": "Ticket factory (isolated) — blind implementer in a fresh worktree, attribution exact",
+  "description": "v2 of ticket-factory (authored 2026-08-04, auth: Kevin, overnight autonomy). WHY v2 EXISTS: the v1 gate ran on the shared live tree, and on all three v1 runs every flagged out-of-scope path belonged to a CONCURRENT WRITER (twice me, once kimi-1), never to the implementer — snapshot-diff attribution cannot work where peers write during the run. Here the implementer works in a fresh git worktree where `git status` is clean by construction, so anything dirty IS the implementer's. Recipe per .EVOLVE (validated 2026-08-03): this repo NESTS, so the monorepo dir inside the worktree is .worktrees/<slug>/agentruntime and node_modules is junctioned at THAT depth; cartridges/ is NOT junctionable (tracked content), so harnesses reading producer state must accept env-var pointing. NODES: prepare (worktree + junction + in-worktree snapshot) -> implement (agent cwd = worktree monorepo dir) -> gate (scope+tamper FIRST, then the ticket's acceptance command, all inside the worktree) -> export (stage in-scope paths, write a reviewable patch to the MAIN tree's .factory/) -> notify. The patch is the product; applying it to the main tree is the ORCHESTRATOR's reviewed act, never automatic. Cleanup is deliberately manual (git worktree remove after the patch is applied and verified). Params: slug (unique per run — the branch grok/<slug> must not already exist), ticket, allow (space-free comma list), protect (comma list), gateCmd (runs from worktree monorepo root), implementerModel, notify, exportPathspec (git pathspec(s) RELATIVE TO THE WORKTREE GIT ROOT — this repo nests, so e.g. agentruntime/packages/deus). A harness needing env vars carries them inside gateCmd itself (cmd syntax: set VAR=x&& ...), because a templated `set \"...\"` breaks on empty and on multi-var. NEVER PUT A BACKSLASH IN gateCmd: measured on deus-t1, `cd packages\\deus` authored through bash -> node -e -> JSON -> template arrived as `cd packagesdeus` (the separator was eaten entirely, not doubled) and failed the run AFTER every real check had passed. Use forward slashes, or a path-free form — `npx vitest run --root packages/deus` instead of `cd packages/deus && npx vitest run`.",
+  "nodes": [
+    {
+      "id": "prepare",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "node scripts/worktree-prepare.mjs {{params.slug}}"
+      },
+      "meta": { "description": "Fresh worktree = 0 pre-existing dirty (measured, vs ~250 on main). Delegated to scripts/worktree-prepare.mjs, which mirrors the root node_modules AND every per-package one (86 owners in this tree) — cycle 6 proved the root-only version reports a FALSE FAILURE on correct work, because dependencies/cartridge-common resolves a sibling through its own node_modules file: link and file: links never materialise from git. Snapshot SHOULD read 0 dirty; if not, something generates files at checkout and the gate will say so." }
+    },
+    {
+      "id": "implement",
+      "type": "agent:run",
+      "timeoutMs": 5400000,
+      "params": {
+        "runtime": "grok",
+        "model": "{{params.implementerModel}}",
+        "capabilities": "fs.read, fs.write, shell",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime/.worktrees/{{params.slug}}/agentruntime",
+        "prompt": "{{params.ticket}}"
+      },
+      "meta": { "description": "The blind implementer, now genuinely alone: no peer, no orchestrator, no supervisor writes into this checkout. fs+shell because an implementer who cannot run its own yardstick is flying blind." }
+    },
+    {
+      "id": "gate",
+      "type": "core:exec",
+      "timeoutMs": 2700000,
+      "params": {
+        "command": "cd .worktrees\\{{params.slug}}\\agentruntime && node scripts/factory-gate.mjs verify --before .factory/{{params.slug}}.before.json --allow {{params.allow}} --protect {{params.protect}} && {{params.gateCmd}}"
+      },
+      "meta": { "description": "Scope+tamper BEFORE acceptance, inside the worktree: a run that moved the yardstick fails before its work is scored, and a flagged stray is the implementer's by construction." }
+    },
+    {
+      "id": "export",
+      "type": "core:exec",
+      "timeoutMs": 300000,
+      "params": {
+        "command": "cd .worktrees\\{{params.slug}} && git add -A -- {{params.exportPathspec}} && git diff --cached --binary HEAD > D:\\claudeplayground\\agentruntime\\agentruntime\\.factory\\{{params.slug}}.patch && git diff --cached --stat HEAD"
+      },
+      "meta": { "description": "The reviewable product: a patch scoped to the ticket's paths, written into the MAIN tree's .factory/. Stat printed so notify carries what changed. Application to main is the orchestrator's reviewed act." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "always": true,
+        "message": "FACTORY-ISO [{{params.slug}}] finished — gate ok={{nodes.gate.result.ok}} exit={{nodes.gate.result.exitCode}}\n\nGATE OUTPUT:\n{{nodes.gate.result.stdout}}\n\nPATCH (apply is YOUR reviewed act): .factory/{{params.slug}}.patch\n{{nodes.export.result.stdout}}\n\nIMPLEMENTER SAID:\n{{nodes.implement.result.reply}}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "prepare", "to": "implement" },
+    { "from": "implement", "to": "gate" },
+    { "from": "gate", "to": "export" },
+    { "from": "export", "to": "notify" }
+  ]
+}

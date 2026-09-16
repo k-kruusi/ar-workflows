@@ -1,0 +1,77 @@
+{
+  "id": "log-compaction",
+  "name": "Log compaction beat — sense → merge → grade → propose",
+  "description": "One control-loop iteration over an append-only log (skills/log-compaction.md). sense (deterministic cluster pick, flow-controlled: stops if LOG-COMPACTION-PENDING.md is unreviewed) → merge (agent + skill proposes ONE merge, never writes the log) → grade (deterministic token-survival gate) → notify. The beat NEVER edits the log; a passed grade leaves LOG-COMPACTION-PENDING.md for human review — the human applies or rejects. Params: agent (notify target), log (default .EVOLVE.md), cwd (repo root for the merge agent).",
+  "nodes": [
+    {
+      "id": "sense",
+      "type": "core:exec",
+      "params": { "command": "node scripts/log-compaction-sense.mjs {{params.log}}" }
+    },
+    {
+      "id": "gateWork",
+      "type": "core:gate",
+      "params": { "sentinel": ".log-compaction/cluster.json" }
+    },
+    {
+      "id": "merge",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-4-6",
+        "cwd": "{{params.cwd}}",
+        "skills": "skills/log-compaction.md",
+        "capabilities": "fs.read,fs.write",
+        "prompt": "You are the merge actuator of the colony's log-compaction control loop. The skill file injected above (skills/log-compaction.md) is your brief — follow its merge gate exactly.\n\n1. Read `.log-compaction/cluster.json` — the deterministic sense stage picked these entries of `{{params.log}}` as duplicates (same mechanism, restated).\n2. Read the cited section of `{{params.log}}` for surrounding context, but your cluster is ONLY the entries in cluster.json.\n3. Write ONE merged entry that preserves the conjunction of the originals: every path, command, threshold, condition trigger, error string, commit hash, date, model/port/PID identifier must survive, and imperatives stay imperatives (no weakening). If the entries turn out to be neighbors rather than duplicates (the conjunction can't be carried by one entry), say so instead of merging.\n4. Write your proposal to `LOG-COMPACTION-PENDING.md` (repo root) with EXACTLY these sections:\n   # Log compaction proposal — <log>, <section>, <date>\n   ## Proposed merge\n   <the merged bullet, ready to paste — or 'NO MERGE: neighbors, not duplicates' with the reason>\n   ## Originals\n   <both original entries, verbatim>\n   ## Token survival\n   <table: each load-bearing token from the originals → the phrase in your merge that carries it>\n   ## Prune / keep notes\n   <anything in the originals you judge decayed (prunable) and why; anything still live that must not be folded>\n\nHARD CONSTRAINTS: never edit `{{params.log}}` itself (the human applies proposals); never invent facts not in the originals; if you write NO MERGE, still complete all sections (Token survival = why the conjunction can't be carried). Your final reply: one paragraph — merge or no-merge, and the single most important judgment call a reviewer should check."
+      }
+    },
+    {
+      "id": "grade",
+      "type": "core:exec",
+      "params": { "command": "node scripts/log-compaction-grade.mjs" }
+    },
+    {
+      "id": "gateGrade",
+      "type": "core:gate",
+      "params": { "sentinel": ".log-compaction/grade.ok" }
+    },
+    {
+      "id": "notifyReview",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "log-compaction beat: a merge proposal passed the deterministic token-survival gate and awaits YOUR review in LOG-COMPACTION-PENDING.md (repo root).\n\nSection: {{params.log}}\nMerge agent's summary: {{nodes.merge.result.reply}}\nGrade: {{nodes.grade.result.stdout}}\n\nTo apply: paste the '## Proposed merge' entry over the originals, delete LOG-COMPACTION-PENDING.md (its existence flow-controls the next beat). To reject: delete the file; add feedback to skills/log-compaction.md if the mistake is generalizable."
+      }
+    },
+    {
+      "id": "notifyIdle",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "log-compaction beat: no work this run — {{nodes.sense.result.stdout}}"
+      }
+    },
+    {
+      "id": "notifyRejected",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "log-compaction beat: proposal REJECTED by the deterministic grade (or the merge agent failed) — LOG-COMPACTION-PENDING.md left in place for inspection; delete it to re-arm the beat.\n\nMerge agent's summary: {{nodes.merge.result.reply}}\nGrade output: {{nodes.grade.result.stdout}}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "sense", "to": "gateWork", "on": "success" },
+    { "from": "gateWork", "to": "merge", "on": "success" },
+    { "from": "gateWork", "to": "notifyIdle", "on": "failure" },
+    { "from": "merge", "to": "grade", "on": "success" },
+    { "from": "merge", "to": "notifyRejected", "on": "failure" },
+    { "from": "grade", "to": "gateGrade", "on": "success" },
+    { "from": "gateGrade", "to": "notifyReview", "on": "success" },
+    { "from": "gateGrade", "to": "notifyRejected", "on": "failure" }
+  ]
+}

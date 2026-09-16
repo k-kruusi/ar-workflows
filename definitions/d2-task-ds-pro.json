@@ -1,0 +1,31 @@
+{
+  "id": "d2-task-ds-pro",
+  "name": "D2 ticket → implement (ds-pro) → notify",
+  "description": "One Diablo-2 TICKETS.md ticket implemented by deepseek-v4-pro via QwenCloud (strongest — hard tickets). TWO nodes, no verify step (Kevin 2026-08-18): the seat implements, the orchestrator (kimi-2) reviews the diff on notify and drives the next ticket. Params: ticket (e.g. T001), agent (notify target, e.g. kimi-2). NOTE like exec-notify: a failed delegation is a RESULT (ok:false), not a node failure — the notify fires either way and states exit/ok rather than declaring success.",
+  "nodes": [
+    {
+      "id": "implement",
+      "type": "core:exec",
+      "params": {
+        "command": "node scripts/d2-delegate.mjs --seat ds-pro --ticket {{params.ticket}} --label \"ds-pro-{{params.ticket}}\""
+      },
+      "timeoutMs": 7200000
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "d2-task-ds-pro finished — ok={{nodes.implement.result.ok}} exit={{nodes.implement.result.exitCode}}\nrun: {{run.correlationId}}\nticket: {{params.ticket}} seat: ds-pro\n\nSTDOUT (tail):\n{{nodes.implement.result.stdout}}\n\nSTDERR (tail):\n{{nodes.implement.result.stderr}}",
+        "always": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "implement",
+      "to": "notify"
+    }
+  ]
+}

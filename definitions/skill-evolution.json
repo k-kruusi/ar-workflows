@@ -1,0 +1,68 @@
+{
+  "id": "skill-evolution",
+  "name": "Propose an evolved fork of a context-fire skill based on friction evidence",
+  "description": "4-node DAG: digest evidence → propose fork → review → revise. Returns proposal to sync caller (NO agent:notify — designed for synchronous POST /workflow invocation). The caller decides whether to publish via the existing contextfire_publish tool; the workflow never publishes on its own authority. NO-FORK is a valid terminal reply when evidence is insufficient or the reviewer rejects the proposal. Params: skillHash (parent hash), skillName, skillContent (full markdown), stateDir (interceptor state/ path), cwd (scratch dir for agent nodes), minReports (default 3).",
+  "params": {
+    "skillHash": "Content hash of the skill to evolve",
+    "skillName": "Human-readable skill name",
+    "skillContent": "Full markdown content of the parent skill",
+    "stateDir": "Absolute path to context-fire-interceptor state directory (contains friction.jsonl)",
+    "cwd": "Working directory — must be the monorepo root so that scripts/friction-digest.mjs resolves and tsx is findable in node_modules. Also used by agent nodes for proposal drafting.",
+    "minReports": "Minimum actionable friction reports to proceed (default 3)"
+  },
+  "nodes": [
+    {
+      "id": "digest",
+      "type": "core:exec",
+      "params": {
+        "command": "node --import tsx/esm scripts/friction-digest.mjs --state-dir \"{{params.stateDir}}\" --skill {{params.skillHash}} --min-reports {{params.minReports}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Aggregate friction.jsonl for this skill. Exit 0 + JSON stdout if sufficient evidence; exit 1 + stderr if not. Non-zero exit is a RESULT (ok:false), not a throw — propose agent handles empty evidence by replying NO-FORK."
+      }
+    },
+    {
+      "id": "propose",
+      "type": "agent:run",
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are drafting an evolved version of a context-fire skill based on concrete friction evidence from agents who used it.\n\nORIGINAL SKILL (name: {{params.skillName}}, hash: {{params.skillHash}}):\n\n{{params.skillContent}}\n\nFRICTION EVIDENCE:\n{{nodes.digest.result.stdout}}\n\nInstructions:\n1. Read the evidence carefully. Each 'hurt' report describes a concrete problem an agent hit.\n2. Draft a revised skill body that addresses the friction. Keep the same structure and intent; fix what's broken.\n3. Use a DIFFERENT name than the original (e.g., append '-v2' or describe the fix). Do NOT reuse the exact original name.\n4. Include this frontmatter in your revised skill:\n   ---\n   name: <new-name>\n   evolved_from: {{params.skillHash}}\n   evolution_note: \"<one line summarizing what the evidence showed>\"\n   ---\n5. If the evidence does not warrant any change (e.g., all 'helped', or the problems are user error not skill error), reply with exactly NO-FORK on its own line, followed by your reasoning.\n6. Reply with ONLY the full revised skill markdown (including frontmatter) or NO-FORK. No preamble, no explanation outside the content.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Proposer: drafts a revised skill or replies NO-FORK. Fresh ephemeral session. Session id threaded to revise node."
+      }
+    },
+    {
+      "id": "review",
+      "type": "agent:run",
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are an independent reviewer of a proposed skill fork. You have NOT seen the proposal process — you are a fresh, adversarial eye.\n\nORIGINAL SKILL:\n{{params.skillContent}}\n\nPROPOSED REVISION:\n{{nodes.propose.result.reply}}\n\nFRICTION EVIDENCE:\n{{nodes.digest.result.stdout}}\n\nReview criteria:\n- Does the revision actually address the friction evidence?\n- Does it preserve the original skill's core intent?\n- Does it introduce new problems?\n- Is the evolved_from frontmatter present and correct?\n- Does it use a different name than the original?\n- Would you trust this revision more than the original?\n\nReply beginning with exactly APPROVE or REJECT on its own line, then your reasoning.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Reviewer: fresh adversarial session, no session id. Leads with APPROVE or REJECT."
+      }
+    },
+    {
+      "id": "revise",
+      "type": "agent:run",
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.propose.result.sessionId}}",
+        "prompt": "The independent reviewer said:\n\n{{nodes.review.result.reply}}\n\nIf the reviewer said REJECT, or if you originally replied NO-FORK, reply with exactly NO-FORK on its own line, then why.\n\nIf the reviewer said APPROVE, incorporate any specific suggestions they made. Reply with ONLY the final revised skill markdown (full content including frontmatter). No preamble, no explanation — just the raw markdown that should be published.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Reviser: resumes proposer session. Finalizes the revised skill or NO-FORK. The caller takes this result and publishes via contextfire_publish if desired."
+      }
+    }
+  ],
+  "edges": [
+    { "from": "digest", "to": "propose" },
+    { "from": "propose", "to": "review" },
+    { "from": "review", "to": "revise" }
+  ]
+}

@@ -1,0 +1,241 @@
+{
+  "id": "review-gauntlet-scen",
+  "name": "Holdout gauntlet — scenarios authored before work, mechanically verified, gated ship",
+  "description": "Variant of review-gauntlet encoding the holdout-scenario discipline (StrongDM/Medin dark-factory lineage; genesis cards 714c02c5 + ba177127): a HOLDOUT AUTHOR derives acceptance scenarios + one Node verification script from the TASK ALONE before implementation starts; the coder never sees them (they live only in run-scope template data, never in a builder prompt nor on disk the builder reads); after the standard 2-judge gauntlet (work -> review -> revise -> review -> revise, coder session resumed across turns, judges fresh), the script runs MECHANICALLY via core:exec (no agent executes its own verdict) and a fail-closed core:gate decides ship vs one fix-round. Second holdout failure ESCALATES to the launching conversation instead of shipping. Use for higher-stakes specs where outcome-holdouts are worth ~4 extra seat turns; flagship review-gauntlet remains the default ship path. COST WARNING: 7 agent turns + up to 2 script runs. Params: task, cwd (caller-prepared worktree; lifecycle is the caller's). KNOWN RESIDUALS (honest): (1) the verification script could itself misbehave - it is authored before implementation exists and never shown to the builder, but it runs with shell reach; treat scen_author as trusted-side. (2) One fix-round only, by design - a second miss is evidence the spec or scenarios disagree with reality, which is a human call, not another retry.",
+  "nodes": [
+    {
+      "id": "scen_author",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "skills": "skills/assert_on.md",
+        "schema": "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"scenarios\",\"verifyScript\",\"coverageNote\"],\"properties\":{\"scenarios\":{\"type\":\"array\",\"minItems\":3,\"items\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"id\",\"given\",\"when\",\"then\"],\"properties\":{\"id\":{\"type\":\"string\"},\"given\":{\"type\":\"string\",\"description\":\"initial state, from the task alone\"},\"when\":{\"type\":\"string\",\"description\":\"the action/trigger\"},\"then\":{\"type\":\"string\",\"description\":\"the observable outcome that defines done\"}}}},\"verifyScript\":{\"type\":\"string\",\"description\":\"ONE self-contained Node.js script (CommonJS, no npm deps beyond the repo's own node_modules) that verifies EVERY scenario against the working directory and exits 0 iff all pass; on failure prints 'FAIL <scenario-id>: <why>' lines to stdout and exits 1. It may spawn read-only project commands (build/test/lint) via child_process.execSync but MUST NOT create, modify, or delete any file.\"},\"coverageNote\":{\"type\":\"string\",\"description\":\"what the scenarios deliberately do NOT cover, and why - the evaluator's denominator\"}}}",
+        "schemaRetries": 3,
+        "prompt": "You are the HOLDOUT AUTHOR. You never implement anything. Your acceptance scenarios are the measure of done for a coding task you will watch a separate agent attempt later.\n\n=== THE TASK ===\n{{params.task}}\n\nYou may read the working directory ({{params.cwd}}) to ground yourself in real interfaces and conventions — but assume the implementation DOES NOT EXIST YET. Derive every scenario from the TASK, not from whatever scaffolding is present.\n\nAuthor 3-6 Given/When/Then scenarios that a neutral party could execute to decide whether the finished work satisfies the task. Then write ONE self-contained Node.js verification script (CommonJS, only the repo's existing node_modules) that mechanically checks every scenario and exits 0 only when all pass. Rules for the script:\n- Read-only toward the working tree: it may RUN project commands (tests, build, lint) via child_process.execSync, but must not write, edit, or delete any file.\n- On failure print one 'FAIL <scenario-id>: <observable gap>' line per failed scenario, then exit 1. All pass -> print 'HOLDOUT-PASS' and exit 0.\n- Prefer exercising real behavior over grepping for strings. A scenario the script cannot really check must be cut or made checkable.\n\nThe implementing agent will NEVER see your scenarios or your script. Do not hedge them into triviality — they are the only outcome-measure outside the builder's optimization loop. Return the structured object."
+      },
+      "meta": {
+        "why": "Holdout authoring BEFORE implementation, from task alone (card 714c02c5). Read-only + structured schema so the scenarios/script ride run-scope only: they enter later prompts by template interpolation and never touch disk the builder can read. fs.read grounds scenarios in real interfaces without leaking anything (there is no implementation yet to leak)."
+      }
+    },
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "prompt": "You are completing a task in THIS directory — an isolated git worktree, so editing files here is safe and cannot affect anyone else's work.\n\n=== TASK ===\n{{params.task}}\n\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write and revise under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nRead the injected skill docs if present; if a change would violate NSP, fix the design rather than adding a soft fallback.\n\nComplete the task now by editing files in this directory. Do NOT commit, push, or open a pull request yet — just make the changes. When you are done, reply with a short summary of what you changed and why, including any invariants you asserted (and why they hold)."
+      },
+      "meta": {
+        "why": "Coder A, fresh session, identical contract to flagship review-gauntlet work node. Deliberately NOT told acceptance scenarios exist — knowing the measure would let the work optimize toward it (Goodhart)."
+      }
+    },
+    {
+      "id": "review_1",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "prompt": "You are an independent, adversarial reviewer (reviewer B), scoped to THIS directory. Another agent just attempted this task:\n\n=== TASK ===\n{{params.task}}\n\nRead the ACTUAL files in this directory and judge whether the work correctly and completely satisfies the task. Be specific and skeptical.\n\n=== CODE DISCIPLINE REVIEW (mandatory — skills/program_style.md + skills/assert_on.md) ===\nIn addition to task completeness, REJECT for discipline failures when they are real and concrete:\n- Hidden assumptions: ?? / \"should always be set\" null guards / ?. on invariant paths that should be assert\n- Silent wrong success: empty placeholders as ok, ignored isError/error flags, swallowed .catch(() => {})\n- Defensive code for impossible cases inside the system (should assert or redesign)\n- Assertion messages that only say \"required\" without WHY / precondition source\n- Speculative try/catch or fallbacks with no evidence of a real edge case\n- Real races handled with bare throw-and-hope instead of documented defensive handling\nAPPROVE only if the task is satisfied AND the change does not introduce the above. Cite file:line for each discipline issue.\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT.\n- APPROVE only if the work genuinely and completely satisfies the task AND passes the code-discipline bar above.\n- If REJECT, list each concrete problem (task or discipline), the file it is in, and exactly what must change."
+      },
+      "meta": {
+        "why": "Judge B — fresh session, identical to flagship. Judges task completeness + discipline; deliberately sees neither the holdout scenarios (they measure outcomes, this judges craft) nor the coder's reasoning."
+      }
+    },
+    {
+      "id": "anchor_check_1",
+      "type": "review:anchor-check",
+      "timeoutMs": 30000,
+      "params": {
+        "text": "{{nodes.review_1.result.reply}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "why": "Reviewer B citations resolved against cwd before the coder revises against them (hallucinated file:line must not burn a coder turn)."
+      }
+    },
+    {
+      "id": "revise_1",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "prompt": "An independent reviewer assessed your work:\n\n=== REVIEWER B ===\n{{nodes.anchor_check_1.result.annotatedText}}\n\nNote: any citation marked [UNVERIFIED CITATION: <token> does not resolve] could not be resolved against the working directory — treat those specific file:line references with skepticism while still considering the finding on its merits.\n\nAddress EVERY point the reviewer raised (task gaps AND code-discipline issues). Prefer asserts with WHY-messages over soft fallbacks. Do NOT commit, push, or open a PR. Reply with a short summary of what you changed in response."
+      },
+      "meta": {
+        "why": "Coder A --resumed (session identity carries history v1->v2 — contiguous implementer, cheap feedback loop)."
+      }
+    },
+    {
+      "id": "review_2",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "prompt": "You are a second independent, adversarial reviewer (reviewer C), scoped to THIS directory. The work was revised once after an earlier review. The task was:\n\n=== TASK ===\n{{params.task}}\n\nRead the ACTUAL files in this directory and judge whether the work NOW correctly and completely satisfies the task. Be specific and skeptical.\n\nApply the same code-discipline bar as the first review (NSP + assert-what-you-know; reject hidden assumptions, silent wrong success, speculative guards, WHY-less assertions).\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT. If REJECT, list each concrete remaining problem, its file, and exactly what must change."
+      },
+      "meta": {
+        "why": "Judge C — distinct fresh session, second independent look at a revised draft."
+      }
+    },
+    {
+      "id": "anchor_check_2",
+      "type": "review:anchor-check",
+      "timeoutMs": 30000,
+      "params": {
+        "text": "{{nodes.review_2.result.reply}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "why": "Reviewer C citations anchored before revision."
+      }
+    },
+    {
+      "id": "revise_2",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.revise_1.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "prompt": "A second independent reviewer assessed your revised work:\n\n=== REVIEWER C ===\n{{nodes.anchor_check_2.result.annotatedText}}\n\nNote: any citation marked [UNVERIFIED CITATION: <token> does not resolve] could not be resolved against the working directory — treat those specific file:line references with skepticism while still considering the finding on its merits.\n\nIf the reviewer APPROVED with nothing to change, leave the work as-is. Otherwise address EVERY point raised.\n\nDo NOT commit, push, or open a PR yet — an independent acceptance evaluation of the finished work runs next, and shipping happens only after it concludes. Reply with a short summary of what you changed."
+      },
+      "meta": {
+        "why": "Coder A --resumed -> v3, but UNLIKE flagship it does not land: in this variant the PR is earned by the holdout gate, not automatic. This is the whole point of the variant — merging is gated on held-out outcome evidence."
+      }
+    },
+    {
+      "id": "holdout_run",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "command": "{{nodes.scen_author.result.structured.verifyScript}}",
+        "cwd": "{{params.cwd}}",
+        "maxOutputBytes": 40000
+      },
+      "meta": {
+        "why": "THE MECHANICAL HOLDOUT — core:exec REPORTS, core:gate ACTUATES (goal-loop-score idiom). The script was authored before implementation existed, never entered a builder prompt, and runs outside any agent's hands, so no seat can make its own verdict true. Non-zero exit is a RESULT (ok:false), never a node failure — the gate below does the branching."
+      }
+    },
+    {
+      "id": "holdout_gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.holdout_run.result.ok}}"
+      },
+      "meta": {
+        "why": "Fails CLOSED on unresolved templates and on ok:false — a typo or a red holdout both route to the fix leg, never silently to ship."
+      }
+    },
+    {
+      "id": "ship",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.revise_2.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "The held-out acceptance evaluation of your work PASSED (all scenarios verified mechanically). Land the work now:\n1. Check what you changed: git status --short\n2. Land it — the ONLY approved path (mention asserted invariants or fail-loud honesty in the message if that was the point of the task):\n   bash $(git rev-parse --show-toplevel)/agentruntime/scripts/ship-guard.sh -m 'conventional message' <each changed path>\n   It refuses to push main directly and opens the PR for you. Do not bypass it with manual git push.\n3. Reply with the PR URL and a one-paragraph summary of the change.\n\nIf git status shows unexpected files you did not create, exclude them and say so in your reply."
+      },
+      "meta": {
+        "why": "Coder A --resumed, lands via ship-guard.sh (the approved path shared with flagship). Reached on EITHER holdout pass (first gate green) or post-fix pass (second gate green)."
+      }
+    },
+    {
+      "id": "holdout_fix",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.revise_2.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "prompt": "An independent acceptance evaluation FAILED. These scenarios were authored from the task BEFORE you started; they are the measure of done, and they are checked mechanically — treat every failure as real until proven otherwise.\n\n=== HELD-OUT EVALUATION OUTPUT ===\nok={{nodes.holdout_run.result.ok}} exit={{nodes.holdout_run.result.exitCode}}\nSTDOUT:\n{{nodes.holdout_run.result.stdout}}\nSTDERR:\n{{nodes.holdout_run.result.stderr}}\n\nFix the WORK so the scenarios pass. Do NOT try to weaken, reinterpret, or explain away a scenario — if you believe a scenario is genuinely wrong (contradicts the task), say so explicitly in your reply instead of coding around it. Address every FAIL line. Do NOT commit or push. Reply with what you changed and why it now satisfies each failed scenario."
+      },
+      "meta": {
+        "why": "Coder A --resumed with the mechanical failure report. The anti-gaming instruction is load-bearing: the known failure mode is editing the product to satisfy the letter of a check it can infer — here it cannot see the script at all, only its output."
+      }
+    },
+    {
+      "id": "holdout_rerun",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "command": "{{nodes.scen_author.result.structured.verifyScript}}",
+        "cwd": "{{params.cwd}}",
+        "maxOutputBytes": 40000
+      },
+      "meta": {
+        "why": "Same script, re-run after the fix round — trust the rerun, not the fixer's account."
+      }
+    },
+    {
+      "id": "ship_gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": {
+        "open": "{{nodes.holdout_rerun.result.ok}}"
+      },
+      "meta": {
+        "why": "Second chance is the last chance: fail-closed again, splitting ship from escalate."
+      }
+    },
+    {
+      "id": "escalate",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "message": "review-gauntlet-scen ESCALATE — held-out acceptance still failing after one fix round; NOT shipped.\nrun: {{run.correlationId}}\ntask: {{params.task}}\n\nFIRST RUN:\n{{nodes.holdout_run.result.stdout}}\n\nAFTER FIX ROUND:\n{{nodes.holdout_rerun.result.stdout}}\n\nThe worktree is left un-shipped at {{params.cwd}} for human inspection. Likely causes: scenario/task disagreement (spec bug), or the fix treated the symptom. Coverage note from the holdout author: {{nodes.scen_author.result.structured.coverageNote}}"
+      },
+      "meta": {
+        "why": "Two red holdouts is evidence, not bad luck — either the scenarios contradict the task or the task contradicts reality. That is a human call (gracian ESCALATE spirit), so the loop stops honestly instead of burning retries or shipping red. Requires params.notifyAgent (the launching conversation)."
+      }
+    }
+  ],
+  "edges": [
+    { "from": "scen_author", "to": "work" },
+    { "from": "work", "to": "review_1" },
+    { "from": "review_1", "to": "anchor_check_1" },
+    { "from": "anchor_check_1", "to": "revise_1" },
+    { "from": "revise_1", "to": "review_2" },
+    { "from": "review_2", "to": "anchor_check_2" },
+    { "from": "anchor_check_2", "to": "revise_2" },
+    { "from": "revise_2", "to": "holdout_run" },
+    { "from": "holdout_run", "to": "holdout_gate" },
+    { "from": "holdout_gate", "to": "ship" },
+    { "from": "holdout_gate", "to": "holdout_fix", "on": "failure" },
+    { "from": "holdout_fix", "to": "holdout_rerun" },
+    { "from": "holdout_rerun", "to": "ship_gate" },
+    { "from": "ship_gate", "to": "ship" },
+    { "from": "ship_gate", "to": "escalate", "on": "failure" }
+  ]
+}

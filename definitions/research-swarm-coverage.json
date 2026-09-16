@@ -1,0 +1,149 @@
+{
+  "id": "research-swarm-coverage",
+  "name": "Research swarm with coverage tracking",
+  "description": "Same 3-lane research pattern as research-swarm, plus a per-cell coverage ledger the synthesizer reads instead of inferring gaps from prose. If runKey is omitted, coverage nodes fall back to the run's correlationId. Params: question, cwd, runKey? (ledger namespace), lanes? (hints), notifyAgent? (async completion whisper).",
+  "nodes": [
+    {
+      "id": "orchestrate",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-sonnet-5",
+        "prompt": "You are a research orchestrator. Your job is to decompose a research question into 3 independent lanes that can be explored in parallel by separate agents.\n\n=== QUESTION ===\n{{params.question}}\n\nIf the caller provided specific lanes, use those. Otherwise decompose the question into the 3 most productive exploration angles.\n\n{{params.lanes}}\n\nFor each lane, write a SELF-CONTAINED research brief. Each exploring agent will only see its own brief — not the others. Include:\n- LANE NAME: short label\n- OBJECTIVE: what to find out\n- SEARCH STRATEGY: where to look (URLs, files, repos, docs)\n- OUTPUT FORMAT: what to report back (structured findings, not prose)\n\nRespond with exactly 3 lanes separated by ===LANE=== markers.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Orchestrator — decomposes the question into 3 parallel research lanes." }
+    },
+    {
+      "id": "coverage-init",
+      "type": "coverage:init",
+      "params": {
+        "runKey": "{{params.runKey}}",
+        "cells": ["lane-1", "lane-2", "lane-3"]
+      },
+      "meta": { "description": "Seeds the coverage ledger with lane-1/2/3 as 'missing'." }
+    },
+    {
+      "id": "explore-1",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a research agent. Execute the research brief below. Use web search, fetch URLs, read files — whatever the brief calls for. Report your findings in the structured format the brief specifies.\n\nExtract the FIRST lane (before the first ===LANE=== marker or the content of Lane 1) from the orchestrator's output:\n\n{{nodes.orchestrate.result.reply}}\n\nBe thorough but concise. Findings, not commentary.\n\nEnd your reply with a final line exactly matching one of:\nSTATUS: missing\nSTATUS: filled\nSTATUS: uncertain\nSTATUS: conflicted\nSTATUS: unreachable\n\nChoose the status that best reflects your confidence in the findings for this lane.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Explorer 1 — Haiku, fresh session, executes the first research lane." }
+    },
+    {
+      "id": "explore-2",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a research agent. Execute the research brief below. Use web search, fetch URLs, read files — whatever the brief calls for. Report your findings in the structured format the brief specifies.\n\nExtract the SECOND lane (between the first and second ===LANE=== markers or the content of Lane 2) from the orchestrator's output:\n\n{{nodes.orchestrate.result.reply}}\n\nBe thorough but concise. Findings, not commentary.\n\nEnd your reply with a final line exactly matching one of:\nSTATUS: missing\nSTATUS: filled\nSTATUS: uncertain\nSTATUS: conflicted\nSTATUS: unreachable\n\nChoose the status that best reflects your confidence in the findings for this lane.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Explorer 2 — Haiku, fresh session, executes the second research lane." }
+    },
+    {
+      "id": "explore-3",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a research agent. Execute the research brief below. Use web search, fetch URLs, read files — whatever the brief calls for. Report your findings in the structured format the brief specifies.\n\nExtract the THIRD lane (after the second ===LANE=== marker or the content of Lane 3) from the orchestrator's output:\n\n{{nodes.orchestrate.result.reply}}\n\nBe thorough but concise. Findings, not commentary.\n\nEnd your reply with a final line exactly matching one of:\nSTATUS: missing\nSTATUS: filled\nSTATUS: uncertain\nSTATUS: conflicted\nSTATUS: unreachable\n\nChoose the status that best reflects your confidence in the findings for this lane.",
+        "capabilities": "fs.read,web"
+      },
+      "meta": { "description": "Explorer 3 — Haiku, fresh session, executes the third research lane." }
+    },
+    {
+      "id": "mark-1",
+      "type": "coverage:mark",
+      "params": {
+        "runKey": "{{params.runKey}}",
+        "cell": "lane-1",
+        "status": "{{nodes.explore-1.result.reply}}",
+        "by": "explore-1",
+        "evidence": { "node": "explore-1" }
+      },
+      "meta": { "description": "Records lane-1 status from the explorer's final STATUS: line." }
+    },
+    {
+      "id": "mark-2",
+      "type": "coverage:mark",
+      "params": {
+        "runKey": "{{params.runKey}}",
+        "cell": "lane-2",
+        "status": "{{nodes.explore-2.result.reply}}",
+        "by": "explore-2",
+        "evidence": { "node": "explore-2" }
+      },
+      "meta": { "description": "Records lane-2 status from the explorer's final STATUS: line." }
+    },
+    {
+      "id": "mark-3",
+      "type": "coverage:mark",
+      "params": {
+        "runKey": "{{params.runKey}}",
+        "cell": "lane-3",
+        "status": "{{nodes.explore-3.result.reply}}",
+        "by": "explore-3",
+        "evidence": { "node": "explore-3" }
+      },
+      "meta": { "description": "Records lane-3 status from the explorer's final STATUS: line." }
+    },
+    {
+      "id": "coverage-summary",
+      "type": "coverage:summary",
+      "params": {
+        "runKey": "{{params.runKey}}"
+      },
+      "meta": { "description": "Reduces the ledger to a byStatus tally + gap list for the synthesizer." }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-opus-5",
+        "prompt": "You are a research synthesizer. Three independent agents explored different aspects of a research question. Combine their findings into a single, actionable report.\n\n=== ORIGINAL QUESTION ===\n{{params.question}}\n\n=== LANE 1 FINDINGS ===\n{{nodes.explore-1.result.reply}}\n\n=== LANE 2 FINDINGS ===\n{{nodes.explore-2.result.reply}}\n\n=== LANE 3 FINDINGS ===\n{{nodes.explore-3.result.reply}}\n\n=== COVERAGE ===\nStatus tally: {{nodes.coverage-summary.result.byStatus}}\nGaps (cells still open/conflicted/unreachable): {{nodes.coverage-summary.result.gaps}}\n\nSynthesize into:\n1. KEY FINDINGS: the most important discoveries across all lanes\n2. CONFLICTS: where findings disagree (the coverage tally flags conflicted cells)\n3. GAPS: what none of the lanes covered confidently (see gaps list above)\n4. ACTIONABLE RECOMMENDATIONS: prioritized next steps\n5. IMPLEMENTATION SPEC: if the question was about building something, provide enough detail to implement directly",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Synthesizer — Opus, fresh session. Receives coverage tally so it knows which cells are open." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "message": "Research complete:\n\n{{nodes.synthesize.result.reply}}"
+      },
+      "meta": { "description": "Optional async completion whisper. No-op when notifyAgent is absent." }
+    }
+  ],
+  "edges": [
+    { "from": "orchestrate", "to": "coverage-init" },
+    { "from": "orchestrate", "to": "explore-1" },
+    { "from": "orchestrate", "to": "explore-2" },
+    { "from": "orchestrate", "to": "explore-3" },
+    { "from": "explore-1", "to": "mark-1" },
+    { "from": "explore-2", "to": "mark-2" },
+    { "from": "explore-3", "to": "mark-3" },
+    { "from": "mark-1", "to": "coverage-summary" },
+    { "from": "mark-2", "to": "coverage-summary" },
+    { "from": "mark-3", "to": "coverage-summary" },
+    { "from": "coverage-init", "to": "mark-1" },
+    { "from": "coverage-init", "to": "mark-2" },
+    { "from": "coverage-init", "to": "mark-3" },
+    { "from": "explore-1", "to": "synthesize" },
+    { "from": "explore-2", "to": "synthesize" },
+    { "from": "explore-3", "to": "synthesize" },
+    { "from": "coverage-summary", "to": "synthesize" },
+    { "from": "synthesize", "to": "notify" }
+  ]
+}

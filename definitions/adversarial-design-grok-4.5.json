@@ -1,0 +1,188 @@
+{
+  "id": "adversarial-design-grok-4.5",
+  "name": "Adversarial design (all Grok 4.5) — propose, cross-critique (+ optional C), synthesize, notify",
+  "description": "Grok-only twin of adversarial-design-v2 for Claude-capped / multi-runtime-independent design runs. Every agent:run uses runtime=grok, model=grok-4.5, tools=ar-tools (required — grok-build has no Claude built-ins). Same topology as v2: decompose → Design A∥B → cross-critiques (+ optional human Design-C peer) → synthesize → agent:notify. Params: task, cwd, context?, designC?, agent? (notify target). Standard async: POST /workflow {\"workflow\":\"adversarial-design-grok-4.5\",\"async\":true,\"params\":{\"task\":\"...\",\"cwd\":\"...\",\"agent\":\"grok-4.5-jonah\",\"designC\":\"...\"}}.",
+  "nodes": [
+    {
+      "id": "decompose",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are a design orchestrator. Read the codebase in this directory, then decompose the following design problem into a structured brief.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== ADDITIONAL CONTEXT ===\n{{params.context}}\n\nProduce a brief with:\nPROBLEM: what needs to be designed and why\nCONSTRAINTS: technical constraints, compatibility requirements, performance needs\nINTERFACES: what existing code/systems this must integrate with (name specific files, modules, APIs)\nSUCCESS CRITERIA: how we know the design is good\nANTI-GOALS: what this design should explicitly NOT do\n\nTwo independent agents will each propose a design from this brief. A third human-authored design may also be provided for peer comparison. Make the brief precise enough that all designers can work without talking to each other.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Decompose — structures the design problem into a crisp brief with constraints and anti-goals."
+      }
+    },
+    {
+      "id": "design-a",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are Design Agent A. Read the codebase in this directory and propose a concrete design for the problem described below. Be specific: name modules, interfaces, data structures, file locations, and integration points.\n\n=== BRIEF ===\n{{nodes.decompose.result.reply}}\n\nYour design should include:\n1. ARCHITECTURE: the overall structure and how components relate\n2. DATA MODEL: key types, schemas, or data structures\n3. INTERFACES: public APIs, function signatures, config shapes\n4. INTEGRATION: how this fits into the existing codebase (specific files and modules)\n5. TRADEOFFS: what you're choosing and what you're giving up\n6. RISKS: what could go wrong with this approach\n\nLabel your proposal DESIGN-A. Be opinionated — pick a direction and commit to it.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Design A — independent proposal, opinionated direction."
+      }
+    },
+    {
+      "id": "design-b",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are Design Agent B. Read the codebase in this directory and propose a concrete design for the problem described below. TAKE A DIFFERENT APPROACH than the obvious one — consider alternative decompositions, different abstraction boundaries, or a contrarian perspective on the constraints.\n\n=== BRIEF ===\n{{nodes.decompose.result.reply}}\n\nYour design should include:\n1. ARCHITECTURE: the overall structure and how components relate\n2. DATA MODEL: key types, schemas, or data structures\n3. INTERFACES: public APIs, function signatures, config shapes\n4. INTEGRATION: how this fits into the existing codebase (specific files and modules)\n5. TRADEOFFS: what you're choosing and what you're giving up\n6. RISKS: what could go wrong with this approach\n\nLabel your proposal DESIGN-B. Be opinionated — pick a direction and commit to it. Explicitly consider an approach the other designer might not.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Design B — independent proposal, prompted to explore an alternative direction."
+      }
+    },
+    {
+      "id": "critique-ab",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are an adversarial design critic. You are reviewing DESIGN-B (NOT your own work). Your job is to find weaknesses, missed requirements, integration problems, and architectural flaws. Be specific and skeptical — reference the actual codebase to check claims.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-B (the proposal you are critiquing) ===\n{{nodes.design-b.result.reply}}\n\n=== DESIGN-A (alternative for comparison) ===\n{{nodes.design-a.result.reply}}\n\n=== DESIGN-C (human-authored, additional alternative — may be blank) ===\n{{params.designC}}\n\nFor each issue you find:\n- Name the specific problem\n- Explain why it's a problem (reference the brief's constraints or the actual code)\n- Suggest how to fix it\n- Rate severity: BLOCKING (design won't work), SIGNIFICANT (will cause problems), or MINOR (improvement opportunity)\n\nAlso note what DESIGN-B does BETTER than the alternatives — be fair, not just adversarial.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Critic A→B — Grok 4.5 critiques Design B, with A and C visible for comparison."
+      }
+    },
+    {
+      "id": "critique-ba",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are an adversarial design critic. You are reviewing DESIGN-A (NOT your own work). Your job is to find weaknesses, missed requirements, integration problems, and architectural flaws. Be specific and skeptical — reference the actual codebase to check claims.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-A (the proposal you are critiquing) ===\n{{nodes.design-a.result.reply}}\n\n=== DESIGN-B (alternative for comparison) ===\n{{nodes.design-b.result.reply}}\n\n=== DESIGN-C (human-authored, additional alternative — may be blank) ===\n{{params.designC}}\n\nFor each issue you find:\n- Name the specific problem\n- Explain why it's a problem (reference the brief's constraints or the actual code)\n- Suggest how to fix it\n- Rate severity: BLOCKING (design won't work), SIGNIFICANT (will cause problems), or MINOR (improvement opportunity)\n\nAlso note what DESIGN-A does BETTER than the alternatives — be fair, not just adversarial.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Critic B→A — Grok 4.5 critiques Design A, with B and C visible for comparison."
+      }
+    },
+    {
+      "id": "critique-c",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are an adversarial design critic. You are reviewing DESIGN-C — a human-authored design submitted alongside the two generated proposals. Your job is to evaluate it on equal footing: find weaknesses, missed requirements, integration problems, and architectural flaws. Reference the actual codebase to check claims.\n\nIf DESIGN-C below is blank or contains only 'N/A', reply exactly: NO-DESIGN-C — skipping this critique.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-C (the proposal you are critiquing) ===\n{{params.designC}}\n\n=== DESIGN-A (alternative for comparison) ===\n{{nodes.design-a.result.reply}}\n\n=== DESIGN-B (alternative for comparison) ===\n{{nodes.design-b.result.reply}}\n\nFor each issue you find:\n- Name the specific problem\n- Explain why it's a problem (reference the brief's constraints or the actual code)\n- Suggest how to fix it\n- Rate severity: BLOCKING, SIGNIFICANT, or MINOR\n\nAlso note what DESIGN-C does BETTER than the alternatives — be fair.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Critic for Design C — Grok 4.5 critiques the human-authored design, with A and B for comparison. No-ops if designC is blank."
+      }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "TIMEBOX: Stay concrete and implementation-ready. Prefer citing real repo paths over speculation. If context is huge, sample the highest-signal files (README, package entrypoints, workflow definitions) rather than open-ended crawl.\n\nYou are the design synthesizer. Up to three designs were proposed and critiqued. You have access to the codebase. Your job: produce the FINAL design that a developer could implement directly.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-A ===\n{{nodes.design-a.result.reply}}\n\n=== CRITIQUE OF DESIGN-A ===\n{{nodes.critique-ba.result.reply}}\n\n=== DESIGN-B ===\n{{nodes.design-b.result.reply}}\n\n=== CRITIQUE OF DESIGN-B ===\n{{nodes.critique-ab.result.reply}}\n\n=== DESIGN-C (human-authored — may be blank) ===\n{{params.designC}}\n\n=== CRITIQUE OF DESIGN-C ===\n{{nodes.critique-c.result.reply}}\n\nIf Design-C critique begins with 'NO-DESIGN-C', treat it as not provided and synthesize from A and B only.\n\nSynthesize the final design:\n1. DECISION: which proposal wins (A, B, C, or HYBRID) and why — address the critiques\n2. ARCHITECTURE: the final structure, resolving conflicts between proposals\n3. DATA MODEL: exact types and interfaces (TypeScript)\n4. FILE PLAN: exact files to create or modify, what goes in each\n5. INTEGRATION POINTS: how this connects to existing code (specific imports, function calls)\n6. RESOLVED CRITIQUES: how each BLOCKING and SIGNIFICANT critique was addressed\n7. IMPLEMENTATION ORDER: the sequence of steps a developer should follow\n8. VERIFICATION: how to test that the design works as intended\n\nBe implementation-ready. A coding agent should be able to execute this spec without ambiguity.",
+        "runtime": "grok",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Synthesizer — Grok 4.5 produces the final design from all proposals and critiques."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "✅ Adversarial design (all Grok 4.5) complete:\n\n{{nodes.synthesize.result.reply}}"
+      },
+      "meta": {
+        "description": "Delivers the synthesized design back to the caller. No-ops if params.agent is blank."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "decompose",
+      "to": "design-a"
+    },
+    {
+      "from": "decompose",
+      "to": "design-b"
+    },
+    {
+      "from": "design-a",
+      "to": "critique-ab"
+    },
+    {
+      "from": "design-b",
+      "to": "critique-ab"
+    },
+    {
+      "from": "design-a",
+      "to": "critique-ba"
+    },
+    {
+      "from": "design-b",
+      "to": "critique-ba"
+    },
+    {
+      "from": "design-a",
+      "to": "critique-c"
+    },
+    {
+      "from": "design-b",
+      "to": "critique-c"
+    },
+    {
+      "from": "critique-ab",
+      "to": "synthesize"
+    },
+    {
+      "from": "critique-ba",
+      "to": "synthesize"
+    },
+    {
+      "from": "critique-c",
+      "to": "synthesize"
+    },
+    {
+      "from": "synthesize",
+      "to": "notify"
+    }
+  ]
+}

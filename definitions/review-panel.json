@@ -1,0 +1,65 @@
+{
+  "id": "review-panel",
+  "name": "Review panel — three model families in parallel, joined mechanically",
+  "resultNode": "panel",
+  "description": "THE ONE JOB: get a review whose independence count is 3, and hand it back as a single node's result so any other DAG can mount it with `workflow:run`. Three reviewers run IN PARALLEL on the same subject, each an EPHEMERAL read-only worker from a DIFFERENT WEIGHT FAMILY — claude/sonnet-5, grok/grok-4.5, and kimi k3 (the last via `workerProfile: kimi-1`, which borrows that cartridge's allowlisted upstream route and model pins for this spawn only) — and a deterministic `core:merge` concatenates their replies. ||| WHY THE JOIN IS core:merge AND NOT AN agent:run SYNTHESIZER, which is the whole point of this definition: three verdicts passed through one model to be 'summarized' come out as ONE model's opinion wearing three hats. The independence the panel spent three spawns to buy is destroyed at the last step, and the output still LOOKS like a panel. The join must be mechanical. See papers/agentruntime/invariant-3-independent-verification.md. ||| SECOND REASON THE MERGE NODE IS NOT OPTIONAL: `workflow:run` surfaces the TERMINAL node's result (a node with no outgoing edges). A graph that ends in three parallel reviewers has THREE terminals, so a parent would take `resultNode` — one of three — and silently discard the other two. A lossy panel that reports as whole is worse than no panel. ||| HOW A THIRD FAMILY IS REACHED WITHOUT A THIRD RUNTIME: `agent:run`'s `runtime` param accepts only claude and grok, but that is NOT the constraint it looks like. `workerProfile` borrows any cartridge's allowlisted upstream env (ANTHROPIC_BASE_URL + scoped token + model pins, read server-side from its workspace.json, merged into THIS spawn only, never logged and never in argv) — so `runtime: claude` + `workerProfile: kimi-1` is an EPHEMERAL k3 worker, not a message to the live kimi-1 cartridge. All three legs are therefore the same shape: fresh, read-only, capability-gated, no prior context. Any Anthropic-protocol-compatible provider (Qwen, DeepSeek, …) becomes a fourth leg by adding a cartridge whose env block carries those keys — zero code. ||| FAN-IN IS FAILURE-TOLERANT ON PURPOSE: every edge is `on: always`, so a dead upstream or a spawn failure degrades the panel to two families and SAYS SO in `missing`, rather than killing the run. Check `partCount` and `missing` before trusting `text` — a 2-of-3 panel is a valid result, but only if the consumer knows it was 2. ||| PARAMS: subject (what to review — paste the material or name the files); focus (optional: the specific claim to refute, or the question to answer; a reviewer asked to 'review' validates, a reviewer asked to REFUTE a named claim works); cwd (repo root the two ephemeral workers read from). ||| USAGE AS A NODE IN ANOTHER DAG: { \"type\": \"workflow:run\", \"timeoutMs\": 1800000, \"params\": { \"workflow\": \"review-panel\", \"params\": { \"subject\": \"...\", \"focus\": \"...\", \"cwd\": \"{{params.cwd}}\" } } } then read {{nodes.<id>.result.text}}. SET timeoutMs GENEROUSLY — it wraps three model turns.",
+  "nodes": [
+    {
+      "id": "review_claude",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are ONE of three independent reviewers, each from a different model family. The other two do not see your answer and you do not see theirs — so do NOT hedge toward a consensus you cannot observe, and do not pad. Your value here is precisely the part another family would get wrong.\n\nSUBJECT UNDER REVIEW:\n{{params.subject}}\n\nWHAT TO DO:\n{{params.focus}}\n\nRULES:\n- You have READ-ONLY filesystem access. Verify claims against the actual repo where you can; say plainly which claims you verified and which you could not.\n- Lead with your strongest disagreement or the most load-bearing flaw. If you find none, say so in one line and spend your effort on the weakest assumption instead — 'looks good' is a non-answer.\n- Separate what you CHECKED from what you BELIEVE. Anything you did not verify must be labelled as opinion.\n- Be specific: name files, lines, and concrete failure scenarios. A general concern that cannot be acted on is noise.\n- Length: as short as the content allows. No summary of the subject back to us — we have it."
+      },
+      "meta": { "description": "Family 1 of 3 — claude/sonnet-5, ephemeral, read-only, no prior context." }
+    },
+    {
+      "id": "review_grok",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are ONE of three independent reviewers, each from a different model family. The other two do not see your answer and you do not see theirs — so do NOT hedge toward a consensus you cannot observe, and do not pad. Your value here is precisely the part another family would get wrong.\n\nSUBJECT UNDER REVIEW:\n{{params.subject}}\n\nWHAT TO DO:\n{{params.focus}}\n\nRULES:\n- You have READ-ONLY filesystem access. Verify claims against the actual repo where you can; say plainly which claims you verified and which you could not.\n- Lead with your strongest disagreement or the most load-bearing flaw. If you find none, say so in one line and spend your effort on the weakest assumption instead — 'looks good' is a non-answer.\n- Separate what you CHECKED from what you BELIEVE. Anything you did not verify must be labelled as opinion.\n- Be specific: name files, lines, and concrete failure scenarios. A general concern that cannot be acted on is noise.\n- Length: as short as the content allows. No summary of the subject back to us — we have it."
+      },
+      "meta": { "description": "Family 2 of 3 — grok/grok-4.5, ephemeral, read-only, no prior context." }
+    },
+    {
+      "id": "review_kimi",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "kimi-1",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are ONE of three independent reviewers, each from a different model family. The other two do not see your answer and you do not see theirs — so do NOT hedge toward a consensus you cannot observe, and do not pad. Your value here is precisely the part another family would get wrong.\n\nSUBJECT UNDER REVIEW:\n{{params.subject}}\n\nWHAT TO DO:\n{{params.focus}}\n\nRULES:\n- You have READ-ONLY filesystem access. Verify claims against the actual repo where you can; say plainly which claims you verified and which you could not.\n- Lead with your strongest disagreement or the most load-bearing flaw. If you find none, say so in one line and spend your effort on the weakest assumption instead — 'looks good' is a non-answer.\n- Separate what you CHECKED from what you BELIEVE. Anything you did not verify must be labelled as opinion.\n- Be specific: name files, lines, and concrete failure scenarios. A general concern that cannot be acted on is noise.\n- Length: as short as the content allows. No summary of the subject back to us — we have it."
+      },
+      "meta": { "description": "Family 3 of 3 — kimi k3, EPHEMERAL via workerProfile (borrows kimi-1's allowlisted upstream route + scoped token + model pins for this spawn only; the live cartridge is not touched). Same shape as legs 1 and 2: fresh, read-only, no prior context." }
+    },
+    {
+      "id": "panel",
+      "type": "core:merge",
+      "params": {
+        "parts": {
+          "REVIEW A — claude / sonnet-5 (ephemeral, read-only)": "{{nodes.review_claude.result.reply}}",
+          "REVIEW B — grok / grok-4.5 (ephemeral, read-only)": "{{nodes.review_grok.result.reply}}",
+          "REVIEW C — kimi / k3 (ephemeral via workerProfile, read-only)": "{{nodes.review_kimi.result.reply}}"
+        },
+        "sources": "review_claude,review_grok,review_kimi"
+      },
+      "meta": { "description": "Deterministic join. `derive` in NODE_KINDS, which is what preserves the panel's independence count of 3. Result: { text, present, missing, partCount, complete, independence }. ||| READ `independence` BEFORE TRUSTING `partCount`: partCount says how many replies ARRIVED, independence says how many opinions they represent. Those diverge the moment two legs share weights or a subscription, and only the second one is what a panel is for — three legs pointed at one model still report partCount 3, complete true. `independence.independenceCount` is distinct weight families; `independence.supplyChainCount` is distinct upstream ACCOUNTS, and `sharedAccounts` names any account serving more than one family (on this fleet qwen/deepseek/glm ride ONE token, so a panel built from those three has 3 families and 1 supply chain). `sources` is declared explicitly rather than defaulting to the whole run so that adding any other infer node to this definition later cannot silently inflate the count. Absent `independence` means NOT MEASURED (no runner wired) — never read it as zero." }
+    }
+  ],
+  "edges": [
+    { "from": "review_claude", "to": "panel", "on": "always" },
+    { "from": "review_grok", "to": "panel", "on": "always" },
+    { "from": "review_kimi", "to": "panel", "on": "always" }
+  ]
+}

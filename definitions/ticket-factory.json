@@ -1,0 +1,53 @@
+{
+  "id": "ticket-factory",
+  "name": "Ticket factory — one scoped ticket to a blind implementer, mechanically gated",
+  "description": "The software-factory floor (authored 2026-08-03, auth: Kevin, present, overnight autonomy — 'grok would work on the implementation of a genesis ticket, simple scoped, he never sees the big picture'). FOUR NODES: (1) snapshot the tree's pre-existing dirt so a peer's edits can never be attributed to this run — this is a shared live tree with 200+ dirty paths at rest; (2) an implementer agent receives ONE ticket carrying its whole world and no vision; (3) the gate verifies scope + yardstick-immutability FIRST and only then runs the ticket's acceptance command, so a run that moved the target fails before its work is scored; (4) notify. SAFETY IS MECHANICAL, NOT INSTRUCTIONAL: the implementer is told not to edit the yardstick AND cannot pass the gate if it does. The notify message reports ok/exit rather than declaring success, because core:exec treats a nonzero exit as a RESULT (ok:false) and this edge fires either way — a success marker here would be unearned. Params: slug (run id, used for the snapshot file), ticket (the whole prompt), allow (comma-separated in-scope paths), protect (comma-separated files the implementer may not touch), gateCmd (acceptance command, run from repo root, only if the gate passes), implementerModel, notify.",
+  "nodes": [
+    {
+      "id": "snapshot",
+      "type": "core:exec",
+      "timeoutMs": 120000,
+      "params": {
+        "command": "node scripts/factory-gate.mjs snapshot --out .factory/{{params.slug}}.before.json"
+      },
+      "meta": { "description": "Attribution baseline. Without it the gate would blame the implementer for the colony's ambient dirt." }
+    },
+    {
+      "id": "implement",
+      "type": "agent:run",
+      "timeoutMs": 5400000,
+      "params": {
+        "runtime": "grok",
+        "model": "{{params.implementerModel}}",
+        "capabilities": "fs.read, fs.write, shell",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "{{params.ticket}}"
+      },
+      "meta": { "description": "The blind implementer: gets fs.read+fs.write+shell because an implementer who cannot RUN its own yardstick is flying blind, and nothing more." }
+    },
+    {
+      "id": "gate",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "command": "node scripts/factory-gate.mjs verify --before .factory/{{params.slug}}.before.json --allow {{params.allow}} --protect {{params.protect}} && {{params.gateCmd}}"
+      },
+      "meta": { "description": "Scope+tamper BEFORE acceptance: a run that edited the yardstick must fail before its work is ever scored." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "always": true,
+        "message": "FACTORY [{{params.slug}}] finished — gate ok={{nodes.gate.result.ok}} exit={{nodes.gate.result.exitCode}}\n\nGATE OUTPUT:\n{{nodes.gate.result.stdout}}\n\nGATE STDERR:\n{{nodes.gate.result.stderr}}\n\nIMPLEMENTER SAID:\n{{nodes.implement.result.reply}}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "snapshot", "to": "implement" },
+    { "from": "implement", "to": "gate" },
+    { "from": "gate", "to": "notify" }
+  ]
+}

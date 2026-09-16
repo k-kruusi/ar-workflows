@@ -1,0 +1,58 @@
+{
+  "id": "hn-monitor",
+  "name": "HN monitor — fetch top/new, judge relevance to agentruntime, whisper digest",
+  "description": "Hacker News triage twin of arxiv-monitor: a deterministic fetch node pulls the newest/top N stories via the official Firebase HN API (scripts/hn-monitor.mjs — NOT HTML scrape of news.ycombinator.com), dedups against data/hn-seen.json (extra runs are cheap no-ops when everything is already seen), a Grok 4.5 judge (runtime=grok, tools=ar-tools) reads unseen titles/metadata against the actual repo and shortlists what could change how agentruntime is built, and the digest is whispered to `agent`. Fetch marks items seen immediately; if the judge node fails, the batch is preserved at data/hn-inbox/latest.json (it will NOT resurface on the next run). v1 is title/metadata only — no article bodies or comment trees. Params: count (stories to pull after filter, default 30, cap 100), source (top|new|best, default top), keywords? (comma-separated optional prefilter on title/url/by), cwd (the agentruntime repo root — judge reads it, never writes), agent (who receives the digest). Preset tip: save hn-hourly with source=top, count=30.",
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "core:exec",
+      "timeoutMs": 120000,
+      "params": {
+        "command": "node scripts/hn-monitor.mjs --count {{params.count}} --source {{params.source}} --keywords {{params.keywords}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Deterministic fetch + dedup via Firebase HN API. stdout is JSON: { fetched, new, items } or { error } — never ambiguous. Non-zero exit still flows downstream; the judge prompt handles the error shape."
+      }
+    },
+    {
+      "id": "judge",
+      "type": "agent:run",
+      "timeoutMs": 1200000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are the research-triage judge for the AgentRuntime project. Your working directory IS the agentruntime repo — read CLAUDE.md (and peek at packages/ or papers/ if needed) to ground yourself in what the project actually is: a container runtime for AI agents — multi-agent stigmergic coordination, MCP tool mesh, workflow DAGs of agent turns, session/memory/compaction management, multi-runtime dispatch (Claude/Grok/local models), agent training and distillation (residents), local GPU inference. Do NOT write or modify any files.\n\nBelow is a JSON batch of Hacker News stories (already deduplicated — you only see stories no prior run has judged). Fields are title/metadata only (id, title, url, hnLink, score, by, time, descendants) — you do not have article bodies or comments.\n\n=== FEED ===\n{{nodes.fetch.result.stdout}}\n\nIf the JSON contains an `error` field, reply with exactly: FEED-ERROR: <the error> and stop.\nIf `new` is 0, reply with exactly: NO-NEW-ITEMS (fetched <fetched>, all previously seen) and stop.\n\nOtherwise triage. Be strict: a story is RELEVANT only if it could change how a specific part of agentruntime is built, validate/refute a design choice, or is a concrete tool/repo/paper the colony should harvest next. General AI hype, product launches without transferable technique, and off-topic threads are not relevance. Prefer items you can map to a named package/dir.\n\nReply format:\nRELEVANT (<n> of <new>):\nFor each relevant story, one block:\n- <TITLE> — <url or hnLink>\n  <1-2 sentences: what it offers, and WHICH agentruntime subsystem it touches (name the package/dir). Confidence: high|medium|low (title-only evidence).>\nOrder by relevance, strongest first.\nEnd with: SKIPPED: <count> — <one clause on the dominant reason>.",
+        "tools": "ar-tools",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Judge — fresh Grok 4.5 + ar-tools, reads the repo for grounding, shortlists with subsystem mapping. Read-only by instruction. Title/metadata only."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "📡 HN monitor ({{params.source}}, count {{params.count}}):\n\n{{nodes.judge.result.reply}}"
+      },
+      "meta": {
+        "description": "Fire-and-forget digest back to the operator's conversation."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "fetch",
+      "to": "judge"
+    },
+    {
+      "from": "judge",
+      "to": "notify"
+    }
+  ]
+}

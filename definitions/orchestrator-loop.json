@@ -1,0 +1,118 @@
+{
+  "id": "orchestrator-loop",
+  "name": "Orchestrator loop — plan, build bespoke work, self-validate, spawn the next round",
+  "description": "The INNER loop of the two-DAG goal loop. One run = one round. The orchestrator sees the current bar output, authors whatever bespoke work graph the round needs (graph:parse -> workflow:run), then the bar is re-run as MECHANICAL self-validation. Green: the round returns to the outer goal loop. Red: it spawns its own successor round via scripts/goal-loop-spawn.mjs — a sync POST /workflow, which starts the successor at depth 0 (the HTTP path is depth-0-only, runner.ts:567-571) while THIS node stays blocked. Outside the original DAG's nesting, inside the parent. That is the loop, and it is why workflow:run is NOT used here: workflow:run nests and caps at MAX_NESTED_DEPTH=5. Most rounds are expected to be plain work that self-validates, not review gauntlets. Params: goalId, round, goalStatement, cwd, barCommand, paramsFile, maxRounds, sessionId.",
+  "resultNode": "finish",
+  "nodes": [
+    {
+      "id": "bar_before",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "{{params.barCommand}}",
+        "cwd": "{{params.barCwd}}",
+        "maxOutputBytes": 60000
+      },
+      "meta": {
+        "why": "Each round opens by measuring reality in code, never by asking the model what state it is in. Non-zero exit is a RESULT here (core:exec does not fail its node), which is what we want: a red bar must still reach the planner."
+      }
+    },
+    {
+      "id": "plan",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{params.sessionId}}",
+        "conventions": "off",
+        "skills": "skills/orchestrate_by.md,skills/judgment_contract.md,skills/claims_carry.md,skills/donate_what.md,skills/expand_on.md",
+        "capabilities": "fs.read",
+        "prompt": "You are the ORCHESTRATOR of a goal loop, on round {{params.round}}. Read skills/orchestrate_by.md before answering.\n\nYou do not do the work yourself. You author ONE bespoke workflow graph that moves the goal forward, and the engine runs it. Most rounds are plain WORK that validates itself mechanically — not a review panel, not a gauntlet. Build a panel only if the round genuinely needs judgement rather than labour.\n\n=== THE GOAL ===\n{{params.goalStatement}}\n\n=== THE BAR (this decides done, not you) ===\nCommand: {{params.barCommand}}\nWorking dir: {{params.cwd}}\n\n=== THE BAR RIGHT NOW (round {{params.round}}) ===\nexit={{nodes.bar_before.result.exitCode}} ok={{nodes.bar_before.result.ok}}\n--- stdout ---\n{{nodes.bar_before.result.stdout}}\n--- stderr ---\n{{nodes.bar_before.result.stderr}}\n\n=== YOUR TURN ===\nRead the bar output above. Decide what single most useful chunk of work would move it toward green, then author a graph that DOES that work. After your graph runs, the bar is re-run automatically. If it is still red, you get another round with the new output — so do not try to solve everything at once, and do not fake progress: the bar is mechanical and you cannot edit it.\n\nHARD CONSTRAINTS ON THE GRAPH YOU AUTHOR:\n1. Every node MUST set an explicit timeoutMs. The engine default is 30000ms and it WILL kill a thinking node. This is the single most common way an authored graph fails.\n2. Node types available: model:generate, agent:run, core:exec, core:merge, core:gate, core:noop.\n3. Prefer FREE local seats for work: model:generate with params { tier: \"local-review\", prompt, maxTokens } returns { reply }. It has no tools and cannot read files — put everything it needs in its prompt.\n4. Use agent:run ONLY when the work genuinely needs tools (editing files). It costs real money. If you use it, set params.cwd to {{params.cwd}} and give it capabilities - the ONLY valid verbs are fs.read, fs.write, shell, web (comma-separated).\n5. core:exec runs shell in {{params.cwd}}. Non-zero exit is a RESULT, not a failure — follow it with core:gate to actuate on it.\n6. This box is WINDOWS: no /dev/null, no cat. Read files with node -e \"process.stdout.write(require('fs').readFileSync(p,'utf8'))\".\n7. Your graph MUST declare \"resultNode\" naming its single terminal node.\n8. Interpolate a node's output as {{nodes.<id>.result.<field>}}.\n\nOUTPUT: exactly one JSON object in a ```json fence and nothing else — no preamble, no explanation.\n{ \"id\": \"...\", \"name\": \"...\", \"description\": \"...\", \"resultNode\": \"...\", \"nodes\": [...], \"edges\": [...] }"
+      },
+      "meta": {
+        "why": "Persistent sessionId is what makes workflow literacy learned-once instead of re-taught every round. capabilities is deny-by-default, so read/grep/glob is deliberate: the orchestrator may LOOK at the tree to plan, but cannot write — writing is the IC's job, inside the graph it authors."
+      }
+    },
+    {
+      "id": "parse",
+      "type": "graph:parse",
+      "timeoutMs": 60000,
+      "params": { "text": "{{nodes.plan.result.reply}}" },
+      "meta": {
+        "why": "workflow:run refuses a string graph by design (inputs.obj), and every model-output field is a string. This is the only bridge between the two."
+      }
+    },
+    {
+      "id": "work",
+      "type": "workflow:run",
+      "timeoutMs": 2700000,
+      "params": { "graph": "{{nodes.parse.result.graph}}" },
+      "meta": {
+        "why": "The authored round-work. Nesting is fine HERE (depth 1 of 5) — it is the round-to-round loop that must not nest, which is why spawn_next uses HTTP instead."
+      }
+    },
+    {
+      "id": "bar_after",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "{{params.barCommand}}",
+        "cwd": "{{params.barCwd}}",
+        "maxOutputBytes": 60000
+      },
+      "meta": {
+        "why": "THE self-validation. Reached on an always-edge so it runs even when the authored work threw — a failed round still gets measured rather than assumed."
+      }
+    },
+    {
+      "id": "gate",
+      "type": "core:gate",
+      "timeoutMs": 30000,
+      "params": { "open": "{{nodes.bar_after.result.ok}}" },
+      "meta": {
+        "why": "core:exec REPORTS, core:gate ACTUATES. Without this the red-bar branch never fires, because a non-zero exit leaves the exec node 'completed'."
+      }
+    },
+    {
+      "id": "settled",
+      "type": "core:noop",
+      "timeoutMs": 30000,
+      "params": {},
+      "meta": { "why": "Bar green — this round ends the inner loop and control returns to the outer goal loop." }
+    },
+    {
+      "id": "spawn_next",
+      "type": "core:exec",
+      "timeoutMs": 86400000,
+      "params": {
+        "command": "node scripts/goal-loop-spawn.mjs --workflow orchestrator-loop --params-file \"{{params.paramsFile}}\" --mode sync --counter round --max {{params.maxRounds}}",
+        "cwd": "{{params.runtimeRoot}}",
+        "maxOutputBytes": 20000
+      },
+      "meta": {
+        "why": "The loop edge. A SYNC POST, so this node blocks for the whole remaining loop — hence the 24h timeout. The spawner increments round, enforces maxRounds in code (the engine's depth backstop does not apply to HTTP spawns), and exits 3 on the ceiling, which is a settle rather than an error."
+      }
+    },
+    {
+      "id": "finish",
+      "type": "core:noop",
+      "timeoutMs": 30000,
+      "params": {},
+      "meta": {
+        "why": "Single terminal, reached on always-edges from both branches, so workflow:run always has exactly one resultNode to surface. It carries no payload on purpose: the outer loop re-runs the bar itself rather than trusting this round's report."
+      }
+    }
+  ],
+  "edges": [
+    { "from": "bar_before", "to": "plan", "on": "success" },
+    { "from": "plan", "to": "parse", "on": "success" },
+    { "from": "parse", "to": "work", "on": "success" },
+    { "from": "parse", "to": "bar_after", "on": "always" },
+    { "from": "work", "to": "bar_after", "on": "always" },
+    { "from": "bar_after", "to": "gate", "on": "success" },
+    { "from": "gate", "to": "settled", "on": "success" },
+    { "from": "gate", "to": "spawn_next", "on": "failure" },
+    { "from": "settled", "to": "finish", "on": "always" },
+    { "from": "spawn_next", "to": "finish", "on": "always" }
+  ]
+}

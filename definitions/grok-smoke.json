@@ -1,0 +1,33 @@
+{
+  "id": "grok-smoke",
+  "name": "Grok smoke — one grok node proves binary/quota/envelope, then notifies",
+  "description": "Overnight-factory preflight (authored 2026-08-03, auth: Kevin, present, overnight autonomy session). ONE grok agent:run answers a trivial repo-grounded question; agent:notify whispers the reply back to the requesting container. If this fails, nothing else grok-shaped should be attempted. Params: notify (container to whisper the result to).",
+  "nodes": [
+    {
+      "id": "probe",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "capabilities": "fs.read",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are a smoke-test probe. Do exactly this and nothing else: read the file package.json in your cwd and reply with ONE line of the form SMOKE-OK <name-field> <number-of-lines-in-file>. Do not edit anything. Do not explore."
+      },
+      "meta": { "description": "Trivial grounded task: proves the grok binary spawns, the model answers, and file read works under the envelope." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "params": {
+        "agent": "{{params.notify}}",
+        "always": true,
+        "message": "grok-smoke result: {{nodes.probe.result.reply}}"
+      },
+      "meta": { "description": "Whisper the probe reply back so the requester sees pass/fail without polling." }
+    }
+  ],
+  "edges": [
+    { "from": "probe", "to": "notify" }
+  ]
+}

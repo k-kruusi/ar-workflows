@@ -1,0 +1,19 @@
+{
+  "id": "ask-resume",
+  "name": "Answered petition → wake the agent that filed it",
+  "description": "The resume half of the ask loop. An agent files a petition and its turn ENDS — chat renders turns, so a reply cannot stay open waiting for a click. This workflow closes that gap from the other side: ATB matches @agentruntime/ask:resolved and fires this, which whispers the operator's answer back to the ORIGINAL filing agent, waking it with the reasoning rather than leaving the answer on a board nobody re-reads. Routing depends on the `agent` field the ask cartridge puts on the resolved signal; without it there is an answer and nobody to give it to. Fires on EVERY resolve, including done/wontfix — an agent that was blocked needs to know it was dismissed just as much as it needs an answer. Params come from ATB's injected `_trigger` (the triggering event), so this definition takes no configuration of its own. TWO NON-OBVIOUS FLAGS, both load-bearing: `always:true` because ATB fires the workflow SYNCHRONOUSLY, and agent:notify no-ops on a sync run (skipped:'sync_run') on the assumption the caller already has the trace — ATB is not a human caller, so without this the node reports completed, the fire reports success, and the whisper is never delivered (observed live, 2026-07-28). `condense:false` because the payload is the OPERATOR'S OWN WORDS: condensing a ruling to save tokens destroys the exact thing that made it worth capturing.",
+  "nodes": [
+    {
+      "id": "wake",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params._trigger.payload.agent}}",
+        "always": true,
+        "condense": false,
+        "message": "Your petition {{params._trigger.payload.id}} was resolved — outcome: {{params._trigger.payload.outcome}}.\n\n{{params._trigger.payload.answer}}\n\nThis is the answer you were blocked on. Re-sense the tree before acting on it: the bundle is a claim about where the work was, not about where it is now. Full detail via ask_get(\"{{params._trigger.payload.id}}\")."
+      }
+    }
+  ],
+  "edges": []
+}

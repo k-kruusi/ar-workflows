@@ -1,0 +1,114 @@
+{
+  "id": "gear-placement",
+  "name": "Gear placement + action taxonomy — grok implements, engine gates TWICE, land blocked on green",
+  "description": "SUPERSEDED by gated-build — kept only as the record of what ran. DO NOT COPY THIS SHAPE: it hardcodes one project's gate paths, commit message and file list into an agentruntime workflow definition, which couples reusable orchestration to a single project's tests. Use gated-build and pass those as params. ||| Adds --gear per-bone offset+rotation and the weapon-class attack taxonomy to render-mixamo.py. ONE sequential owner (same file). Fixes the structural hole in gear-substrate: the gate is re-run by the ENGINE after the fix pass, and land only runs if that second gate exits 0 — a gate that does not block the commit is not a gate.",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "grok",
+        "model": "grok-4.6",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "Two coupled changes in tools/blender/render-mixamo.py. Same file, so do them together in one sequential pass.\n\n=== CHANGE 1: --gear needs OFFSET and ROTATION ===\n\nToday --gear is  label=mesh@bone  and the mesh lands at the bone with no placement control. A probe proved this is not usable: a wizard hat rendered SIDEWAYS THROUGH THE SKULL and a staff floated beside the hand. Baking the offset into the mesh vertices was tried and FAILED, because bone-parenting anchors children at the bone TAIL and the pose transform rotates the local frame.\n\nMeasured on the Archer rig, so you do not have to guess:\n  mixamorig:Head      local +Y -> world (0, 0.027, 1.0)   i.e. up\n  mixamorig:RightHand local +Y -> world (-1.0, -0.001, -0.006)\n\nExtend the syntax to:   label=mesh@bone[+x,y,z][@rx,ry,rz]\n  +x,y,z    translation in METRES in the bone local frame (optional)\n  @rx,ry,rz rotation in DEGREES, XYZ euler, bone local frame (optional)\nBoth optional and independent: @bone, @bone+0,0.35,0, @bone@0,0,90, and @bone+0.1,0.2,0@45,0,0 must all parse. Keep plain label=mesh@bone working unchanged.\n\nadd_weapon() in this same file ALREADY solves this exact problem — read it and copy the approach:\n  - matrix_parent_inverse MUST stay Matrix.Identity(4). Never pose_bone.matrix.inverted().\n  - ROTATE THE OFFSET TOO (off = euler.to_matrix() @ Vector(offset)) so the piece moves as one rigid body instead of the parts scattering.\n  - Mixamo armature scale is 0.01 and a bone-parented child inherits it, so offsets given in world metres must be divided by the armature scale, same as WEAPON_SHAPES does.\n\n=== CHANGE 2: weapon-class attack taxonomy ===\n\nOne attack clip cannot serve a greatsword and a bow. Add these to ACTION_ORDER and ACTION_FRAMES alongside the existing ids:\n  attack-1h 12, attack-1h-shield 12, attack-2h-slash 12, attack-2h-thrust 12, attack-dual 14, attack-bow 14, attack-crossbow 14\nKeep the existing idle/walk/attack/cast/hit/loot/death entries exactly as they are — plain attack stays as the fallback.\n\nWe do NOT have clips for the new ids yet. That is deliberate: the renderer already skips a missing <action>.fbx with a printed note, so declaring them turns every run into a live manifest of which clips are still missing. Make sure that skip note is clear and names the expected filename. Do NOT invent placeholder clips.\n\n=== DONE ===\nRun:  node gates/gate-gear-placement.mjs\nIt renders a marker cube on mixamorig:Head four ways (baseline, +Y offset, +X offset, 90deg rotation) and asserts the offset is PER-AXIS (+Y and +X must differ from each other, not just from baseline) and that rotation changes the render.\n\nDO NOT EDIT THE GATE OR gates/gate-gear-attach.mjs. They are not yours. If you believe a gate is wrong, stop and say so with your reasoning.\nAlso re-run  node gates/gate-gear-attach.mjs  to prove you did not regress the existing attachment behaviour.\nBlender takes minutes per gate run. That is expected.\n\nReply with what you changed, both gates final output, and anything the spec above got wrong."
+      },
+      "meta": {
+        "description": "Implementer — grok-4.6, sequential owner for two coupled changes in one file."
+      }
+    },
+    {
+      "id": "gate",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "command": "node gates/gate-gear-placement.mjs"
+      },
+      "meta": {
+        "description": "Gate #1, engine-run."
+      }
+    },
+    {
+      "id": "verify",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "capabilities": "fs.read,shell",
+        "prompt": "You are verifying a change to a Blender render pipeline. Be adversarial but fair.\n\n=== WHAT WAS ASKED ===\nAdd a --gear flag to tools/blender/render-mixamo.py that bone-parents arbitrary meshes by name, and bump FACING_BUCKETS from 8 to 16 with the yaw step derived from it.\n\n=== WHAT THE IMPLEMENTER SAID ===\n{{nodes.work.result.reply}}\n\n=== WHAT THE GATE SAID WHEN THE ENGINE RAN IT ===\nexit code: {{nodes.gate.result.exitCode}}\n{{nodes.gate.result.stdout}}\n{{nodes.gate.result.stderr}}\n\n=== CHECK, BY READING THE ACTUAL DIFF (git diff) ===\n1. Was the GATE modified? git diff gates/ — if the implementer changed the gate to make it pass, that is an automatic REJECT, say so loudly.\n2. Is matrix_parent_inverse set to Matrix.Identity(4) for gear? Anything else is wrong and will place gear at the wrong bone offset.\n3. Does a missing mesh file or an unknown bone name fail loudly with the available bones listed, or does it silently skip?\n4. Does the existing --weapon flag still work unchanged?\n5. Is the yaw step derived from FACING_BUCKETS (360/N) rather than still hardcoded to 45 degrees? A hardcoded 45 with N=16 renders each direction twice and is the exact bug this change exists to avoid.\n6. Are gear meshes included in subject_bounds() so camera framing accounts for them?\n\nReply APPROVE if all six hold and the gate exited 0. Otherwise REJECT with the specific problems, each naming a file and line."
+      },
+      "meta": {
+        "description": "Verifier — Sonnet, cross-family from the implementer. Reads the diff, not the claim."
+      }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "grok",
+        "model": "grok-4.6",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "A reviewer checked your work:\n\n=== REVIEW ===\n{{nodes.verify.result.reply}}\n\nIf the reviewer APPROVED, change nothing and reply exactly: No changes needed.\n\nOtherwise address every issue raised, then re-run  node gates/gate-gear-attach.mjs  until it exits 0. Still do not edit the gate. Reply with what you fixed and the gate's final output."
+      },
+      "meta": {
+        "description": "Fix — grok resumes its own session, so it keeps the context of what it built."
+      }
+    },
+    {
+      "id": "land",
+      "type": "core:exec",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "timeoutMs": 1500000,
+        "command": "node gates/gate-gear-placement.mjs && node gates/gate-gear-attach.mjs && powershell -ExecutionPolicy Bypass -File ../../../agentruntime/scripts/safe-commit.ps1 -m \"feat(hollowtide-art): --gear offset+rotation and weapon-class attack taxonomy\" tools/blender/render-mixamo.py gates/gate-gear-placement.mjs"
+      },
+      "meta": {
+        "description": "Land — core:exec. BOTH gates must exit 0 before safe-commit runs; the conditional is a shell &&, not a prompt asking an agent to be honest."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 300000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "condense": true,
+        "task": "gear substrate build",
+        "message": "**gear-placement finished** (run {{run.correlationId}})\n\n**Gate #1 (engine, exit {{nodes.gate.result.exitCode}}):**\n{{nodes.gate.result.stdout}}\n\n**Verifier:**\n{{nodes.verify.result.reply}}\n\n**Fix:**\n{{nodes.fix.result.reply}}\n\n**Land (gates re-run + commit, exit {{nodes.land.result.exitCode}}):**\n{{nodes.land.result.stdout}}\n{{nodes.land.result.stderr}}"
+      },
+      "meta": {
+        "description": "Notify — fire-and-forget back into the operator's chat. Async run, so this actually delivers."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "work",
+      "to": "gate"
+    },
+    {
+      "from": "gate",
+      "to": "verify"
+    },
+    {
+      "from": "verify",
+      "to": "fix"
+    },
+    {
+      "from": "fix",
+      "to": "land"
+    },
+    {
+      "from": "land",
+      "to": "notify"
+    }
+  ]
+}

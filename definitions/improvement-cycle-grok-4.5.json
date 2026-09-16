@@ -1,0 +1,134 @@
+{
+  "id": "improvement-cycle-grok-4.5",
+  "name": "Improvement cycle (all Grok 4.5) — select/curate/synthesize on grok runtime",
+  "description": "Grok-only twin of improvement-cycle. Every agent:run uses runtime=grok, model=grok-4.5, tools=ar-tools (MCP file/shell — required because grok-build has no Claude built-ins). SAFE BY DESIGN: finds/verifies/cards only — no auto-fix. Params (ALL REQUIRED): notify (who gets the summary, e.g. grok-4.5-jonah), scope (prose hint for the selector; for a pinned baseline include the three dirs you want). Standard async: POST /workflow {\"workflow\":\"improvement-cycle-grok-4.5\",\"async\":true,\"fresh\":true,\"params\":{\"notify\":\"grok-4.5-jonah\",\"scope\":\"BASELINE PIN: src/runtimes, packages/editor, packages/genesis\"}}.\n\nNOTE: there is no src/runtimes/grok-build-2 — grok-build-2 is a *template* name; the runtime adapter is src/runtimes/grok-build.ts (runtime id 'grok-build'). Selector targets directories (src/runtimes). Curator timeoutMs=3600000; timeboxed prompts (post curate-3 timeout lesson 2026-07-19).",
+  "nodes": [
+    {
+      "id": "select",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are the SELECTOR for one Grok improvement cycle over the agentruntime monorepo (cwd). Scope hint: {{params.scope}}.\n\nBASELINE RULE (this definition's first job): if the scope mentions a pin / baseline / specific packages, select EXACTLY those directories (repo-relative), best first, max 3. Preferred baseline when hinted:\nsrc/runtimes\npackages/editor\npackages/genesis\n\nOtherwise: (1) git log --since='21 days ago' --name-only for churn; (2) check cartridges/genesis/state/board.json for collapseKey starting with 'auto-' or 'auto-grok-' — avoid already-carded targets; (3) prefer doc/code drift or thin tests.\n\nReply with EXACTLY three lines, each a repo-relative directory (e.g. packages/foo or src/runtimes). No prose, no numbering — three bare paths on three lines.",
+        "capabilities": "fs.read,shell",
+        "observe": true
+      },
+      "meta": {
+        "description": "Selector on grok-4.5 + ar-tools. Honors baseline pin in scope when present."
+      }
+    },
+    {
+      "id": "curate-1",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "TIMEBOX (hard): You have limited wall time. Do NOT open-ended crawl. Max ~12 tool rounds. Prefer README + 3–8 highest-signal source files (entrypoints, CLAUDE.md, index, reducer, panel, main server). Ship 2–4 VERIFIED findings + CARD + digest even if incomplete. An empty/timed-out reply is worse than a short honest card. Start by listing files, then deep-read only the hot spots.\n\nYou are LEAF CURATOR lane 1 of a Grok improvement cycle. The selector chose these targets (one per line):\n{{nodes.select.result.reply}}\n\nYOUR TARGET IS THE FIRST LINE. Curate it fully:\n1. ANALYZE: actively read its README/docstrings (intended) + src (built) with ar-tools (read_file, grep_search, run_command, file_outline). Find 2-4 REAL gaps/bugs/drift, each citing real repo-relative file paths. North star: agentruntime = container runtime for AI agents; verified/honest state over asserted; Honest Response Principle.\n2. VERIFY: path-check every ref; adversarially re-read the sharpest claims; KILL any finding you cannot confirm — a laundered claim is worse than none.\n3. ROUTE each survivor: auto-fix | escalate | drop.\n4. CARD IT: write a JSON file of shape {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"improvement-cycle-grok-4.5\",\"payload\":{\"agent\":\"improvement-cycle-grok-lane1\",\"source\":\"conversation\",\"collapse_key\":\"auto-grok-<target-with-dashes>\",\"title\":\"Grok auto-scan: <n> verified finding(s) in <target>\",\"why\":\"Leaf-curator-verified by the Grok improvement cycle; for human triage, NOT auto-fixed.\",\"note\":\"<one line per verified finding: [route, confidence] title — evidence file:line>\"}} then POST it: curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm genesis in observers.\n5. Reply with a compact digest: target, findings table (title | verified? | route | confidence | file:line), could-not-verify note, card-posted confirmation. Use ClaimsBlock stance if you make load-bearing claims.",
+        "capabilities": "fs.read,shell",
+        "observe": true
+      },
+      "meta": {
+        "description": "Leaf curator lane 1 — grok-4.5 + ar-tools."
+      }
+    },
+    {
+      "id": "curate-2",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "TIMEBOX (hard): You have limited wall time. Do NOT open-ended crawl. Max ~12 tool rounds. Prefer README + 3–8 highest-signal source files (entrypoints, CLAUDE.md, index, reducer, panel, main server). Ship 2–4 VERIFIED findings + CARD + digest even if incomplete. An empty/timed-out reply is worse than a short honest card. Start by listing files, then deep-read only the hot spots.\n\nYou are LEAF CURATOR lane 2 of a Grok improvement cycle. The selector chose these targets (one per line):\n{{nodes.select.result.reply}}\n\nYOUR TARGET IS THE SECOND LINE. Curate it fully:\n1. ANALYZE: read README/docstrings + src with ar-tools. Find 2-4 REAL gaps/bugs/drift with real file paths. North star: Honest Response / verified state.\n2. VERIFY: path-check; kill unconfirmed claims.\n3. ROUTE: auto-fix | escalate | drop.\n4. CARD IT: write JSON {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"improvement-cycle-grok-4.5\",\"payload\":{\"agent\":\"improvement-cycle-grok-lane2\",\"source\":\"conversation\",\"collapse_key\":\"auto-grok-<target-with-dashes>\",\"title\":\"Grok auto-scan: <n> verified finding(s) in <target>\",\"why\":\"Leaf-curator-verified by the Grok improvement cycle; for human triage, NOT auto-fixed.\",\"note\":\"<one line per verified finding: [route, confidence] title — evidence file:line>\"}} then curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm genesis in observers.\n5. Compact digest + card confirmation.",
+        "capabilities": "fs.read,shell",
+        "observe": true
+      },
+      "meta": {
+        "description": "Leaf curator lane 2 — grok-4.5 + ar-tools."
+      }
+    },
+    {
+      "id": "curate-3",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "TIMEBOX (hard): You have limited wall time. Do NOT open-ended crawl. Max ~12 tool rounds. Prefer README + 3–8 highest-signal source files (entrypoints, CLAUDE.md, index, reducer, panel, main server). Ship 2–4 VERIFIED findings + CARD + digest even if incomplete. An empty/timed-out reply is worse than a short honest card. Start by listing files, then deep-read only the hot spots.\n\nYou are LEAF CURATOR lane 3 (packages/genesis is often large — BE SURGICAL). Selector targets:\n{{nodes.select.result.reply}}\n\nYOUR TARGET IS THE THIRD LINE.\nFocus first on: package README/CLAUDE.md, src/index.ts or main entry, capture/emit handlers, board/state schema, panel if present. Ignore node_modules, dist, large lockfiles, historical dumps.\n1. ANALYZE with ar-tools — 2–4 REAL gaps with file:line.\n2. VERIFY each claim; kill unconfirmed.\n3. ROUTE: auto-fix | escalate | drop.\n4. CARD: write JSON {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"improvement-cycle-grok-4.5\",\"payload\":{\"agent\":\"improvement-cycle-grok-lane3\",\"source\":\"conversation\",\"collapse_key\":\"auto-grok-<target-with-dashes>\",\"title\":\"Grok auto-scan: <n> verified finding(s) in <target>\",\"why\":\"Leaf-curator-verified by the Grok improvement cycle; for human triage, NOT auto-fixed.\",\"note\":\"<one line per finding: [route, conf] title — file:line>\"}} then: curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm genesis in observers.\n5. FINAL reply = compact digest only (no long tool narration). Findings table + card confirmation + could-not-verify.\n",
+        "capabilities": "fs.read,shell",
+        "observe": true
+      },
+      "meta": {
+        "description": "Leaf curator lane 3 — grok-4.5 + ar-tools."
+      }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "TIMEBOX (hard): You have limited wall time. Do NOT open-ended crawl. Max ~12 tool rounds. Prefer README + 3–8 highest-signal source files (entrypoints, CLAUDE.md, index, reducer, panel, main server). Ship 2–4 VERIFIED findings + CARD + digest even if incomplete. An empty/timed-out reply is worse than a short honest card. Start by listing files, then deep-read only the hot spots.\n\nYou are the SYNTHESIS TIER of a Grok improvement cycle. Three leaf-curator digests (already self-verified, findings carded to genesis):\n\n=== LANE 1 ===\n{{nodes.curate-1.result.reply}}\n\n=== LANE 2 ===\n{{nodes.curate-2.result.reply}}\n\n=== LANE 3 ===\n{{nodes.curate-3.result.reply}}\n\nFind CROSS-CUTTING SEAMS spanning >=2 of the three targets. CONFIRM each candidate in actual code with ar-tools before claiming (unconfirmed seams are dropped, not hedged). If a real seam is found, card it to genesis (collapse_key \"auto-grok-seam-<slug>\", agent \"improvement-cycle-grok-synthesis\", caller \"improvement-cycle-grok-4.5\") via emit-event curl; confirm observers contains genesis.\n\nReply with: confirmed seams (file:line) or 'no cross-cutting seams confirmed', plus one honest line on what you could not check.",
+        "capabilities": "fs.read",
+        "observe": true
+      },
+      "meta": {
+        "description": "Cross-cutting synthesis on grok-4.5 + ar-tools."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "message": "🔄 [improvement-cycle-grok-4.5 complete]\n\nSELECTED:\n{{nodes.select.result.reply}}\n\nLANE DIGESTS:\n{{nodes.curate-1.result.reply}}\n\n{{nodes.curate-2.result.reply}}\n\n{{nodes.curate-3.result.reply}}\n\nSYNTHESIS:\n{{nodes.synthesize.result.reply}}\n\nVerified findings are on the genesis board (collapse_key auto-grok-*) for triage."
+      },
+      "meta": {
+        "description": "Cycle summary to the notify agent (typically grok-4.5-jonah)."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "select",
+      "to": "curate-1"
+    },
+    {
+      "from": "select",
+      "to": "curate-2"
+    },
+    {
+      "from": "select",
+      "to": "curate-3"
+    },
+    {
+      "from": "curate-1",
+      "to": "synthesize"
+    },
+    {
+      "from": "curate-2",
+      "to": "synthesize"
+    },
+    {
+      "from": "curate-3",
+      "to": "synthesize"
+    },
+    {
+      "from": "synthesize",
+      "to": "notify"
+    }
+  ]
+}

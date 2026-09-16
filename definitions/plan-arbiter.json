@@ -1,0 +1,73 @@
+{
+  "id": "plan-arbiter",
+  "name": "Plan arbiter — generate wide, judge, escalate the survivor",
+  "description": "Fan out three cheap agents to generate competing plans for a task, a mid-tier judge picks the best, then escalate the winner to an expensive model for elaboration. Structural independence: generators are fresh Haiku sessions that never see each other; the judge is a fresh Sonnet session with no generation context; the elaborator is a fresh Opus session that only sees the winner, not the losers. Each tier does what it's best at — Haiku explores the space, Sonnet filters, Opus refines. Params: task (the work to plan for — bake in all context), cwd (working directory the agents read for codebase context). To change model tiers, edit the definition or clone it.",
+  "nodes": [
+    {
+      "id": "gen-1",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a planning agent. Read the codebase in this directory and produce a concrete implementation plan for the following task. Be specific: name files, functions, and the sequence of changes. Identify risks and open questions.\n\n=== TASK ===\n{{params.task}}\n\nRespond with ONLY the plan. No preamble. Label it PLAN-1.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Generator 1 — Haiku, fresh session, explores one approach." }
+    },
+    {
+      "id": "gen-2",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a planning agent. Read the codebase in this directory and produce a concrete implementation plan for the following task. Explore an ALTERNATIVE approach to the obvious one — consider a different decomposition, a different entry point, or a different ordering. Be specific: name files, functions, and the sequence of changes. Identify risks and open questions.\n\n=== TASK ===\n{{params.task}}\n\nRespond with ONLY the plan. No preamble. Label it PLAN-2.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Generator 2 — Haiku, fresh session, prompted to explore an alternative." }
+    },
+    {
+      "id": "gen-3",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a planning agent. Read the codebase in this directory and produce a concrete implementation plan for the following task. Prioritize SIMPLICITY — what is the smallest, least-risky change that fully satisfies the task? Cut scope aggressively where the task allows it. Be specific: name files, functions, and the sequence of changes. Identify risks and open questions.\n\n=== TASK ===\n{{params.task}}\n\nRespond with ONLY the plan. No preamble. Label it PLAN-3.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Generator 3 — Haiku, fresh session, prompted for minimal-scope approach." }
+    },
+    {
+      "id": "judge",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-sonnet-5",
+        "prompt": "You are an independent judge. Three planning agents each produced a plan for the same task. You have access to the same codebase they read. Your job: evaluate each plan against the ACTUAL code, pick the best one (or synthesize a hybrid if pieces from different plans combine well), and explain your reasoning.\n\n=== TASK ===\n{{params.task}}\n\n=== PLAN-1 ===\n{{nodes.gen-1.result.reply}}\n\n=== PLAN-2 ===\n{{nodes.gen-2.result.reply}}\n\n=== PLAN-3 ===\n{{nodes.gen-3.result.reply}}\n\nEvaluate each plan on: correctness (does it actually work against this codebase?), completeness (does it cover the full task?), simplicity (unnecessary complexity?), risk (what could go wrong?).\n\nYour reply MUST follow this format:\nWINNER: PLAN-N (or HYBRID)\nREASONING: why this plan wins and the others lose\nFINAL PLAN: the complete plan to hand to the implementer (either the winner verbatim, or the hybrid you constructed)\nREJECTED: what was wrong with each losing plan",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Judge — Sonnet, fresh session, structurally independent from generators. Reads all three plans + the actual codebase." }
+    },
+    {
+      "id": "elaborate",
+      "type": "agent:run",
+      "timeoutMs": 720000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-opus-5",
+        "prompt": "A judge reviewed three competing implementation plans and selected a winner. You are the elaborator — a senior engineer who takes the winning plan and makes it implementation-ready. Read the actual codebase, verify every file and function the plan references exists, fill in gaps the plan left vague, and produce a detailed implementation specification.\n\n=== TASK ===\n{{params.task}}\n\n=== JUDGE'S DECISION ===\n{{nodes.judge.result.reply}}\n\nYour output should be a complete, actionable implementation guide that a coding agent can execute without ambiguity. Include: exact files to modify, the specific changes in each file, the order of operations, and how to verify each step. If the plan references something that doesn't exist in the codebase, flag it.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Elaborator — Opus, fresh session. Only sees the winning plan (not the losers). Verifies against actual code and fills gaps." }
+    }
+  ],
+  "edges": [
+    { "from": "gen-1", "to": "judge" },
+    { "from": "gen-2", "to": "judge" },
+    { "from": "gen-3", "to": "judge" },
+    { "from": "judge", "to": "elaborate" }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "id": "review-gauntlet",
+  "name": "Work → review → revise → review → revise → PR (2-judge gauntlet)",
+  "description": "Package-agnostic code-review workflow — simplified. A coder agent does a task in a working directory, two INDEPENDENT reviewer agents critique it (B then C, each a fresh ephemeral session), the coder revises against each, and the final coder turn commits, pushes, and opens a PR. Pure acyclic DAG of 7 nodes: work → review_1 → anchor_check_1 → revise_1 → review_2 → anchor_check_2 → revise_2. The single coder session is --resumed across turns (carries its history v1→v2→v3); the two judges are distinct fresh sessions (generator≠evaluator + a second independent look at a revised draft). CODE DISCIPLINE: work/revise/review nodes inject skills/program_style.md (NSP) + skills/assert_on.md (assert-what-you-know) and prompt for fail-loud invariants over silent fallbacks; reviewers may REJECT on discipline failures with file:line. CITATION GUARD: review:anchor-check nodes sit between each review→revise edge; they resolve plain file:line citations in reviewer output against the cwd and annotate unresolvable ones with [UNVERIFIED CITATION: ...] before the coder revises against them — hallucinated file:line no longer burns a coder turn. Full receipt tokens (path:Lx@commit#hash) are left to the safe-commit gate. revise_2 ALWAYS commits, pushes, and opens a PR — no gating. Callable by id from ANY chat or cartridge: POST /workflow {workflowId:\"review-gauntlet\", params:{task, cwd}} (or save a preset). NOT zohar-specific — zohar is just one caller (its drift fix = a task that says 'edit only this doc to match the code'). Params: task (the work to do, with all specifics baked in), cwd (a git worktree/branch the CALLER prepared off its chosen base — lifecycle is the caller's so cleanup-on-failure is guaranteed in imperative code, and 'branch off origin/main' stays a caller policy, not baked in). The PR URL is the terminal output.",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are completing a task in THIS directory — an isolated git worktree, so editing files here is safe and cannot affect anyone else's work.\n\n=== TASK ===\n{{params.task}}\n\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write and revise under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nRead the injected skill docs if present; if a change would violate NSP, fix the design rather than adding a soft fallback.\n\nComplete the task now by editing files in this directory. Do NOT commit, push, or open a pull request yet — just make the changes. When you are done, reply with a short summary of what you changed and why, including any invariants you asserted (and why they hold).",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Coder A, fresh session. Does the task in cwd under NSP + assert-what-you-know (skills injected); returns session id for --resume."
+      }
+    },
+    {
+      "id": "review_1",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are an independent, adversarial reviewer (reviewer B), scoped to THIS directory. Another agent just attempted this task:\n\n=== TASK ===\n{{params.task}}\n\nRead the ACTUAL files in this directory and judge whether the work correctly and completely satisfies the task. Be specific and skeptical.\n\n=== CODE DISCIPLINE REVIEW (mandatory — skills/program_style.md + skills/assert_on.md) ===\nIn addition to task completeness, REJECT for discipline failures when they are real and concrete:\n- Hidden assumptions: ?? / \"should always be set\" null guards / ?. on invariant paths that should be assert\n- Silent wrong success: empty placeholders as ok, ignored isError/error flags, swallowed .catch(() => {})\n- Defensive code for impossible cases inside the system (should assert or redesign)\n- Assertion messages that only say \"required\" without WHY / precondition source\n- Speculative try/catch or fallbacks with no evidence of a real edge case\n- Real races handled with bare throw-and-hope instead of documented defensive handling\nAPPROVE only if the task is satisfied AND the change does not introduce the above. Cite file:line for each discipline issue.\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT.\n- APPROVE only if the work genuinely and completely satisfies the task AND passes the code-discipline bar above.\n- If REJECT, list each concrete problem (task or discipline), the file it is in, and exactly what must change.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Judge B — FRESH session. Task completeness + NSP/assert discipline bar; leads with APPROVE/REJECT."
+      }
+    },
+    {
+      "id": "anchor_check_1",
+      "type": "review:anchor-check",
+      "timeoutMs": 30000,
+      "params": {
+        "text": "{{nodes.review_1.result.reply}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Validate reviewer B's file:line citations against cwd. Unresolvable citations get [UNVERIFIED CITATION: ...] annotation. Passes text through unchanged when no citations or on resolver failure."
+      }
+    },
+    {
+      "id": "revise_1",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "prompt": "An independent reviewer assessed your work:\n\n=== REVIEWER B ===\n{{nodes.anchor_check_1.result.annotatedText}}\n\nNote: any citation marked [UNVERIFIED CITATION: <token> does not resolve] could not be resolved against the working directory — treat those specific file:line references with skepticism while still considering the finding on its merits.\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write and revise under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nRead the injected skill docs if present; if a change would violate NSP, fix the design rather than adding a soft fallback.\n\nIf the reviewer APPROVED with nothing to change, leave the work as-is. Otherwise re-read the relevant files and address EVERY point the reviewer raised (task gaps AND code-discipline issues). Prefer asserts with WHY-messages over soft fallbacks. Do NOT commit, push, or open a PR yet. Reply with a short summary of what you changed in response.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Coder A --resumed. Addresses B's task + discipline critique → v2. Reviewer B's citations have been anchor-checked; unresolvable ones are annotated."
+      }
+    },
+    {
+      "id": "review_2",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are a second independent, adversarial reviewer (reviewer C), scoped to THIS directory. The work was revised once after an earlier review. The task was:\n\n=== TASK ===\n{{params.task}}\n\nRead the ACTUAL files in this directory and judge whether the work NOW correctly and completely satisfies the task. Be specific and skeptical.\n\n=== CODE DISCIPLINE REVIEW (mandatory — skills/program_style.md + skills/assert_on.md) ===\nIn addition to task completeness, REJECT for discipline failures when they are real and concrete:\n- Hidden assumptions: ?? / \"should always be set\" null guards / ?. on invariant paths that should be assert\n- Silent wrong success: empty placeholders as ok, ignored isError/error flags, swallowed .catch(() => {})\n- Defensive code for impossible cases inside the system (should assert or redesign)\n- Assertion messages that only say \"required\" without WHY / precondition source\n- Speculative try/catch or fallbacks with no evidence of a real edge case\n- Real races handled with bare throw-and-hope instead of documented defensive handling\nAPPROVE only if the task is satisfied AND the change does not introduce the above. Cite file:line for each discipline issue.\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT. APPROVE only if the task is fully met AND code discipline holds. If REJECT, list each concrete remaining problem (task or discipline), the file it is in, and exactly what must change.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Judge C — distinct FRESH session. Second independent look including code discipline."
+      }
+    },
+    {
+      "id": "anchor_check_2",
+      "type": "review:anchor-check",
+      "timeoutMs": 30000,
+      "params": {
+        "text": "{{nodes.review_2.result.reply}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Validate reviewer C's file:line citations against cwd. Unresolvable citations get [UNVERIFIED CITATION: ...] annotation. Passes text through unchanged when no citations or on resolver failure."
+      }
+    },
+    {
+      "id": "revise_2",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.revise_1.result.sessionId}}",
+        "prompt": "A second independent reviewer assessed your revised work:\n\n=== REVIEWER C ===\n{{nodes.anchor_check_2.result.annotatedText}}\n\nNote: any citation marked [UNVERIFIED CITATION: <token> does not resolve] could not be resolved against the working directory — treat those specific file:line references with skepticism while still considering the finding on its merits.\n\n=== CODE DISCIPLINE (mandatory — skills/program_style.md + skills/assert_on.md) ===\nYou write and revise under Negative Space Programming (NSP) + Assert What You Know:\n- System BOUNDARIES (user input, external APIs, deserialization, untrusted HTTP): stay defensive.\n- INSIDE those boundaries: assert load-bearing invariants; do NOT paper over them with ?? defaults, silent coercions, optional chaining on known-present values, or try/catch around \"shouldn't throw\".\n- Assert at point of use with a message that states WHY the invariant is true (precondition source), not just that a value is \"required\".\n- Prefer loud, precise failure over silent wrong success (empty placeholders, ignored isError, fallbacks that hide bugs).\n- Real race/edge cases: handle defensively AND document why; speculative guards: remove.\n- No .catch(() => {}); log or bound. Repeated guards → extract assertX().\n- Surface assumptions before coding; only assert what is load-bearing and flow-guaranteed.\n- Surgical edits: only lines that serve the task; match existing style.\nRead the injected skill docs if present; if a change would violate NSP, fix the design rather than adding a soft fallback.\n\nAfter addressing all points from reviewer C, COMMIT, PUSH, and OPEN A PULL REQUEST:\n1. Check what you changed: git status --short\n2. Land it — the ONLY approved path (mention asserted invariants or fail-loud honesty in the message if that was the point of the task):\n   bash $(git rev-parse --show-toplevel)/agentruntime/scripts/ship-guard.sh -m 'conventional message' <each changed path>\n   It refuses to push main/master, refuses to ship from the shared main checkout, and takes explicit paths only (there is no -A — a shared-index sweep steals other agents' in-flight work). If it REFUSES, STOP and report its message verbatim; do not route around it with raw git.\n3. Open a pull request against main with a summary of the change, both reviews, and any NSP/assert discipline fixes.\n\nReply with the resulting pull-request URL on a single line. If nothing changed and there is nothing to ship, reply exactly: NO-CHANGES.",
+        "skills": "skills/program_style.md,skills/assert_on.md",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Coder A --resumed. Addresses C's critique → v3, then commits, pushes, and opens PR. Reviewer C's citations have been anchor-checked; unresolvable ones are annotated."
+      }
+    }
+  ],
+  "edges": [
+    { "from": "work", "to": "review_1" },
+    { "from": "review_1", "to": "anchor_check_1" },
+    { "from": "anchor_check_1", "to": "revise_1" },
+    { "from": "revise_1", "to": "review_2" },
+    { "from": "review_2", "to": "anchor_check_2" },
+    { "from": "anchor_check_2", "to": "revise_2" }
+  ]
+}

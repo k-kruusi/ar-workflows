@@ -1,0 +1,91 @@
+{
+  "id": "improvement-cycle",
+  "name": "Improvement cycle — select targets, leaf-curate + verify each, synthesize seams, card to genesis",
+  "description": "ONE cycle of the self-improving loop (built + proven 2026-07-17/18, see papers/agentruntime/memory-as-workflow-loop.md): a selector picks 3 fresh high-value targets (git churn + drift signals, avoiding already-carded ones), 3 parallel LEAF-CURATOR agents each analyze->adversarially-self-verify->route their target and emit a genesis card of VERIFIED findings, a synthesis agent finds cross-cutting seams across the three digests (confirming in code before claiming), and the cycle summary whispers back. SAFE BY DESIGN: finds/verifies/cards only — no auto-fix, no merges; genesis is the human triage gate. Repetition is the CALLER's job (repeated POSTs, chrono, or an atb listener) — a DAG is acyclic, one POST = one cycle. Per-node timeoutMs bounds every agent (a hung curator is reaped, unlike SDK-side loops). Params (ALL REQUIRED — an unfilled param passes through literally and fails the node loudly, same contract as divergent-reasoning-custom): notify (who gets the summary, e.g. claude), curatorModel (e.g. claude-opus-4-8 — verification quality is model-dependent, do NOT cheap out on the curator tier: a weak curator launders unverified claims), scope (prose hint for the selector, e.g. 'packages/* and dependencies/*'). Standard invocation: POST /workflow {\"workflow\":\"improvement-cycle\",\"async\":true,\"params\":{\"notify\":\"claude\",\"curatorModel\":\"claude-opus-4-8\",\"scope\":\"packages/* and dependencies/*\"}}.",
+  "nodes": [
+    {
+      "id": "select",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are the SELECTOR for one improvement cycle over the agentruntime monorepo (cwd). Pick the 3 highest-value FRESH targets to scan. Scope hint: {{params.scope}}.\n\nMethod (deterministic signals first): (1) git log --since='21 days ago' --name-only for churn hot-spots; (2) check cartridges/genesis/state/board.json for cards whose collapseKey starts with 'auto-' — their targets were ALREADY scanned, avoid them; (3) prefer targets where docs/README likely drifted from code or tests look thin. If packages/memory/src/selection.ts's deterministic scorer is wired to a CLI, prefer it; otherwise your judgment over the signals above is fine.\n\nReply with EXACTLY three lines, each a repo-relative directory (e.g. packages/foo or dependencies/bar or src/workflows), best first. No prose, no numbering — three bare paths on three lines.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Deterministic-signal selector. Its 3-line reply is split by the lane prompts (lane N takes line N)." }
+    },
+    {
+      "id": "curate-1",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are LEAF CURATOR lane 1 of an improvement cycle. The selector chose these targets (one per line):\n{{nodes.select.result.reply}}\n\nYOUR TARGET IS THE FIRST LINE. Curate it fully:\n1. ANALYZE: actively read its README/docstrings (intended) + src (built) with your tools. Find 2-4 REAL gaps/bugs/drift, each citing real repo-relative file paths. North star: agentruntime = container runtime for AI agents; verified/honest state over asserted; Honest Response Principle.\n2. VERIFY (what makes you a curator, not a finder): path-check every ref; adversarially spot-check your sharpest claims by re-reading the code; KILL any finding you cannot confirm — a laundered claim is worse than none.\n3. ROUTE each survivor: auto-fix (clear/safe/verified) | escalate (design or values call) | drop.\n4. CARD IT: write a JSON file (use your file tools) of shape {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"improvement-cycle\",\"payload\":{\"agent\":\"improvement-cycle-lane1\",\"source\":\"conversation\",\"collapse_key\":\"auto-<target-with-dashes>\",\"title\":\"Auto-scan: <n> verified finding(s) in <target>\",\"why\":\"Leaf-curator-verified by the improvement cycle; for human triage, NOT auto-fixed.\",\"note\":\"<one line per verified finding: [route, confidence] title — evidence file:line>\"}} then POST it: curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm the response lists genesis in observers.\n5. Reply with a compact digest: target, findings table (title | verified? | route | confidence | file:line evidence), an honest could-not-verify note, and card-posted confirmation.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Leaf curator lane 1 — the proven analyze->self-verify->route->card mandate. Digest feeds synthesis." }
+    },
+    {
+      "id": "curate-2",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are LEAF CURATOR lane 2 of an improvement cycle. The selector chose these targets (one per line):\n{{nodes.select.result.reply}}\n\nYOUR TARGET IS THE SECOND LINE. Curate it fully:\n1. ANALYZE: actively read its README/docstrings (intended) + src (built) with your tools. Find 2-4 REAL gaps/bugs/drift, each citing real repo-relative file paths. North star: agentruntime = container runtime for AI agents; verified/honest state over asserted; Honest Response Principle.\n2. VERIFY: path-check every ref; adversarially spot-check your sharpest claims by re-reading the code; KILL any finding you cannot confirm.\n3. ROUTE each survivor: auto-fix | escalate | drop.\n4. CARD IT: write a JSON file of shape {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"improvement-cycle\",\"payload\":{\"agent\":\"improvement-cycle-lane2\",\"source\":\"conversation\",\"collapse_key\":\"auto-<target-with-dashes>\",\"title\":\"Auto-scan: <n> verified finding(s) in <target>\",\"why\":\"Leaf-curator-verified by the improvement cycle; for human triage, NOT auto-fixed.\",\"note\":\"<one line per verified finding: [route, confidence] title — evidence file:line>\"}} then POST it: curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm genesis in observers.\n5. Reply with a compact digest: target, findings table (title | verified? | route | confidence | file:line evidence), an honest could-not-verify note, and card-posted confirmation.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Leaf curator lane 2." }
+    },
+    {
+      "id": "curate-3",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are LEAF CURATOR lane 3 of an improvement cycle. The selector chose these targets (one per line):\n{{nodes.select.result.reply}}\n\nYOUR TARGET IS THE THIRD LINE. Curate it fully:\n1. ANALYZE: actively read its README/docstrings (intended) + src (built) with your tools. Find 2-4 REAL gaps/bugs/drift, each citing real repo-relative file paths. North star: agentruntime = container runtime for AI agents; verified/honest state over asserted; Honest Response Principle.\n2. VERIFY: path-check every ref; adversarially spot-check your sharpest claims by re-reading the code; KILL any finding you cannot confirm.\n3. ROUTE each survivor: auto-fix | escalate | drop.\n4. CARD IT: write a JSON file of shape {\"tag\":\"@agentruntime/genesis:capture\",\"caller\":\"improvement-cycle\",\"payload\":{\"agent\":\"improvement-cycle-lane3\",\"source\":\"conversation\",\"collapse_key\":\"auto-<target-with-dashes>\",\"title\":\"Auto-scan: <n> verified finding(s) in <target>\",\"why\":\"Leaf-curator-verified by the improvement cycle; for human triage, NOT auto-fixed.\",\"note\":\"<one line per verified finding: [route, confidence] title — evidence file:line>\"}} then POST it: curl -s -X POST http://127.0.0.1:39827/emit-event -H \"Content-Type: application/json\" --data-binary @<file>. Confirm genesis in observers.\n5. Reply with a compact digest: target, findings table (title | verified? | route | confidence | file:line evidence), an honest could-not-verify note, and card-posted confirmation.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Leaf curator lane 3." }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "{{params.curatorModel}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "prompt": "You are the SYNTHESIS TIER of an improvement cycle. Three leaf-curator digests (already self-verified, findings carded to genesis):\n\n=== LANE 1 ===\n{{nodes.curate-1.result.reply}}\n\n=== LANE 2 ===\n{{nodes.curate-2.result.reply}}\n\n=== LANE 3 ===\n{{nodes.curate-3.result.reply}}\n\nFind CROSS-CUTTING SEAMS — a concern, contract, vocabulary drift, or bug pattern spanning >=2 of the three targets that no single lane could see. CONFIRM each candidate seam in the actual code with your tools before claiming it (do not invent seams; an unconfirmed seam is dropped, not hedged). If a real seam is found, card it to genesis the same way the lanes did (collapse_key \"auto-seam-<slug>\", agent \"improvement-cycle-synthesis\") via the emit-event curl, and confirm observers contains genesis.\n\nReply with: confirmed seams (with file:line evidence) or 'no cross-cutting seams confirmed' (a legitimate result — say it plainly rather than manufacturing one), plus one honest line on what you could not check.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Cross-cutting synthesis over the three digests (structured state, not raw transcripts). Confirms in code before claiming; no-seams is a legitimate honest outcome." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "message": "🔄 [improvement-cycle complete]\n\nSELECTED:\n{{nodes.select.result.reply}}\n\nLANE DIGESTS:\n{{nodes.curate-1.result.reply}}\n\n{{nodes.curate-2.result.reply}}\n\n{{nodes.curate-3.result.reply}}\n\nSYNTHESIS:\n{{nodes.synthesize.result.reply}}\n\nVerified findings are on the genesis board (collapse_key auto-*) for triage. Run another cycle with the same POST; the selector avoids already-carded targets."
+      },
+      "meta": { "description": "Cycle summary back to the operator's conversation. Genesis holds the durable output." }
+    }
+  ],
+  "edges": [
+    { "from": "select", "to": "curate-1" },
+    { "from": "select", "to": "curate-2" },
+    { "from": "select", "to": "curate-3" },
+    { "from": "curate-1", "to": "synthesize" },
+    { "from": "curate-2", "to": "synthesize" },
+    { "from": "curate-3", "to": "synthesize" },
+    { "from": "synthesize", "to": "notify" }
+  ]
+}

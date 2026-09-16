@@ -1,0 +1,116 @@
+{
+  "id": "gear-substrate",
+  "name": "Gear substrate — grok implements against an operator-written gate, Sonnet verifies, notify back",
+  "description": "SUPERSEDED by gated-build — kept only as the record of what ran. DO NOT COPY THIS SHAPE: it hardcodes one project's gate paths, commit message and file list into an agentruntime workflow definition, which couples reusable orchestration to a single project's tests. Use gated-build and pass those as params. ||| Builds the composable-gear substrate in hollowtide's Blender renderer: a --gear flag that bone-parents arbitrary meshes by name, plus the 8->16 facing bump the husk spec requires. ONE sequential owner because both changes touch the same file (GOAL.md: coupled systems get one owner; parallel fan-out is for uncoupled pieces). The gate is written by the operator-side agent and lives OUTSIDE the implementer's remit — a seat that can edit its gate passes by deleting the assertion. Params: cwd (hollowtide root), notifyAgent (who to message when done).",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "grok",
+        "model": "grok-4.6",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "Implement two coupled changes in tools/blender/render-mixamo.py. They touch the same file, so do them together, sequentially, in one pass.\n\n=== CHANGE 1: --gear, the composable gear substrate ===\n\nAdd a --gear flag that attaches arbitrary external meshes to NAMED BONES, so gear rides every animation frame and every camera facing automatically.\n\nSyntax (repeatable, comma-separated):\n  --gear \"helmet=path/to/helmet.obj@mixamorig:Head,shield=path/to/shield.glb@mixamorig:LeftHand\"\n\nEach entry is  <label>=<mesh file path>@<bone name>.\nSupport at minimum .obj and .glb/.gltf (use bpy.ops.wm.obj_import / bpy.ops.import_scene.gltf; note Blender 4.x+ renamed the OBJ importer — check which exists before calling).\n\nCRITICAL — copy the parenting approach that add_weapon() in this same file already uses and that was hard-won:\n  ob.parent = arm\n  ob.parent_type = 'BONE'\n  ob.parent_bone = <bone name>\n  ob.matrix_parent_inverse = Matrix.Identity(4)\nIt MUST be Identity. Feeding it pose_bone.matrix.inverted() puts the object at the hip while the hand is at chest height — the comment above that line in add_weapon explains why. Do not 'improve' it.\n\nAlso:\n- Fail LOUDLY with a clear message if a mesh file is missing or a bone name is not on the armature. List the available bone names in the error. Do not silently skip — a silently-skipped gear piece renders a whole sheet that looks fine and is wrong.\n- Gear meshes must be included in the subject_bounds() calculation so the camera framing accounts for them (see how weapon_parts is already passed in).\n- Keep the existing --weapon flag working exactly as-is. Do not refactor it away.\n- Gear keeps its own materials (do not apply the neutral grey MAT to it).\n\n=== CHANGE 2: FACING_BUCKETS 8 -> 16 ===\n\nGOAL.md specifies 16 directions: free orbit over 8-direction sprites visibly flip-flops. Bump FACING_BUCKETS to 16 and make sure place_camera()'s yaw step derives from it (360/FACING_BUCKETS degrees) rather than a hardcoded 45. Check nothing else in the file assumes 8.\n\n=== HOW YOU KNOW YOU ARE DONE ===\n\nRun:  node gates/gate-gear-attach.mjs\n\nThat gate is the definition of done. It renders the same action twice — once bare, once with a test cube parented to mixamorig:Head — and asserts 16 facings, gear present in EVERY cell, and gear contribution VARYING across frames (proving it tracks the bone rather than sitting in world space).\n\nDO NOT EDIT THE GATE. It is not yours. If you believe the gate itself is wrong, stop and say so in your reply with your reasoning — do not change it to pass.\n\nThe gate runs Blender and takes several minutes. That is expected. Iterate until it exits 0.\n\nReply with: what you changed, the gate's final output, and anything you found that the spec above got wrong."
+      },
+      "meta": {
+        "description": "Implementer — grok-4.6. Sequential single owner for two coupled changes in one file."
+      }
+    },
+    {
+      "id": "gate",
+      "type": "core:exec",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "command": "node gates/gate-gear-attach.mjs"
+      },
+      "meta": {
+        "description": "The gate, re-run by the ENGINE — not self-reported. An agent claiming green is not the same as green."
+      }
+    },
+    {
+      "id": "verify",
+      "type": "agent:run",
+      "timeoutMs": 900000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "capabilities": "fs.read,shell",
+        "prompt": "You are verifying a change to a Blender render pipeline. Be adversarial but fair.\n\n=== WHAT WAS ASKED ===\nAdd a --gear flag to tools/blender/render-mixamo.py that bone-parents arbitrary meshes by name, and bump FACING_BUCKETS from 8 to 16 with the yaw step derived from it.\n\n=== WHAT THE IMPLEMENTER SAID ===\n{{nodes.work.result.reply}}\n\n=== WHAT THE GATE SAID WHEN THE ENGINE RAN IT ===\nexit code: {{nodes.gate.result.exitCode}}\n{{nodes.gate.result.stdout}}\n{{nodes.gate.result.stderr}}\n\n=== CHECK, BY READING THE ACTUAL DIFF (git diff) ===\n1. Was the GATE modified? git diff gates/ — if the implementer changed the gate to make it pass, that is an automatic REJECT, say so loudly.\n2. Is matrix_parent_inverse set to Matrix.Identity(4) for gear? Anything else is wrong and will place gear at the wrong bone offset.\n3. Does a missing mesh file or an unknown bone name fail loudly with the available bones listed, or does it silently skip?\n4. Does the existing --weapon flag still work unchanged?\n5. Is the yaw step derived from FACING_BUCKETS (360/N) rather than still hardcoded to 45 degrees? A hardcoded 45 with N=16 renders each direction twice and is the exact bug this change exists to avoid.\n6. Are gear meshes included in subject_bounds() so camera framing accounts for them?\n\nReply APPROVE if all six hold and the gate exited 0. Otherwise REJECT with the specific problems, each naming a file and line."
+      },
+      "meta": {
+        "description": "Verifier — Sonnet, cross-family from the implementer. Reads the diff, not the claim."
+      }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "grok",
+        "model": "grok-4.6",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "capabilities": "fs.read,fs.write,shell",
+        "prompt": "A reviewer checked your work:\n\n=== REVIEW ===\n{{nodes.verify.result.reply}}\n\nIf the reviewer APPROVED, change nothing and reply exactly: No changes needed.\n\nOtherwise address every issue raised, then re-run  node gates/gate-gear-attach.mjs  until it exits 0. Still do not edit the gate. Reply with what you fixed and the gate's final output."
+      },
+      "meta": {
+        "description": "Fix — grok resumes its own session, so it keeps the context of what it built."
+      }
+    },
+    {
+      "id": "land",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-haiku-4-5-20251001",
+        "capabilities": "fs.read,shell",
+        "prompt": "Commit the work in this directory. Do NOT push — this branch is deliberately unpushed and the operator will send it up.\n\n1. git status --short  to see what changed.\n2. Commit ONLY tools/blender/render-mixamo.py and gates/gate-gear-attach.mjs and any doc they updated, using:\n   powershell -ExecutionPolicy Bypass -File <runtime-root>/scripts/safe-commit.ps1 -m \"<conventional message>\" <each path>\n   where <runtime-root> is the agentruntime/ directory. Paths are relative to THIS directory.\n   Never use git add -A or git commit -a — this is a shared tree and a sweep steals other agents' staged work.\n3. Do not pass -Push.\n\nWrite a commit message that says what changed and WHY the gate is differential (renders twice, bare vs geared) — a future agent needs to know the reasoning, not just the diff.\n\nReply with the commit hash, or NO-CHANGES if nothing was modified."
+      },
+      "meta": {
+        "description": "Land — commits locally via safe-commit, no push. Shared-tree safe."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 300000,
+      "params": {
+        "agent": "{{params.notifyAgent}}",
+        "condense": true,
+        "task": "gear substrate build",
+        "message": "**gear-substrate workflow finished** (run {{run.correlationId}})\n\n**Gate (engine-run, exit {{nodes.gate.result.exitCode}}):**\n{{nodes.gate.result.stdout}}\n\n**Verifier:**\n{{nodes.verify.result.reply}}\n\n**Fix pass:**\n{{nodes.fix.result.reply}}\n\n**Landed:**\n{{nodes.land.result.reply}}"
+      },
+      "meta": {
+        "description": "Notify — fire-and-forget back into the operator's chat. Async run, so this actually delivers."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "work",
+      "to": "gate"
+    },
+    {
+      "from": "gate",
+      "to": "verify"
+    },
+    {
+      "from": "verify",
+      "to": "fix"
+    },
+    {
+      "from": "fix",
+      "to": "land"
+    },
+    {
+      "from": "land",
+      "to": "notify"
+    }
+  ]
+}

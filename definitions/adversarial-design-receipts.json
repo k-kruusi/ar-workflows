@@ -1,0 +1,106 @@
+{
+  "id": "adversarial-design-receipts",
+  "name": "Adversarial design — workflow inference receipts + derive/infer (Opus A / Grok B)",
+  "description": "adversarial-design topology with structural model diversity: Design-A is Claude Opus 4.8, Design-B is Grok 4.5 (runtime grok). Task is fixed in spirit via params.task — design semantic persistence for agentruntime workflows: derive vs infer node typing + inference receipts. Critiques + synthesize stay on Claude Opus 4.8 for a strong adjudicator. Ends with agent:notify. Params: task, cwd, context?, agent? (notify target).",
+  "nodes": [
+    {
+      "id": "decompose",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "prompt": "You are a design orchestrator for the AgentRuntime monorepo. Read the LIVE workflow engine before writing the brief — at minimum:\n- src/workflows/nodes/README.md\n- src/workflows/nodes/contract.ts (defineNode / NodeContext)\n- src/workflows/nodes/agent-run.ts (return shape)\n- src/workflows/run-store.ts (WorkflowRunProgress / LiveNodeState)\n- src/workflows/definitions/arxiv-monitor.json (example multi-kind graph)\n- src/workflows/nodes/judge.ts\nDo NOT invent packages that are not in the tree. Do NOT write or modify files.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== ADDITIONAL CONTEXT ===\n{{params.context}}\n\nProduce a brief with:\nPROBLEM: what needs to be designed and why (semantic persistence for workflow runs, not a new workflow engine)\nCONSTRAINTS: must integrate with existing JSON DAGs, agent:run, WorkflowRunStore, template interpolation, sync vs async runs, multi-agent colony (safe-commit, no shared-index races)\nINTERFACES: name specific files, types, and APIs that will change or be extended\nSUCCESS CRITERIA: how we know receipts + derive/infer are real (not just docs)\nANTI-GOALS: what this design should explicitly NOT do (e.g. do not replace task-graph, do not require rewriting every blueprint on day one, do not claim formal transition semantics if out of scope)\nOPEN QUESTIONS: ambiguities the two designers must resolve differently so proposals actually diverge\n\nTwo independent agents will propose designs from this brief without talking to each other. Be precise.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Decompose — Sonnet, codebase-grounded brief." }
+    },
+    {
+      "id": "design-a",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "prompt": "You are Design Agent A (Claude Opus 4.8). Read the codebase and propose a concrete design for the problem below. Be specific: modules, types, file paths, migration steps.\n\nBias toward: minimal surface area, additive contracts, honest errors (never silent empty receipts), colony-safe changes (no git commit -a patterns in docs/scripts). Prefer extending WorkflowRunStore / node results over a parallel knowledge graph v1.\n\n=== BRIEF ===\n{{nodes.decompose.result.reply}}\n\nYour design must include:\n1. ARCHITECTURE — components and data flow for derive vs infer + receipts\n2. DATA MODEL — TypeScript types for InferenceReceipt, DeriveResult (or equivalent), node metadata (epistemic kind)\n3. INTERFACES — exact function signatures / node contract changes / JSON schema fields\n4. INTEGRATION — which files in src/workflows/ change; how agent:run, core:exec, judge:score, workflow:run classify\n5. EMISSION RULES — when a receipt is written; what is required vs optional-honest; sync vs async runs\n6. MIGRATION — how existing blueprints get kinds (defaulting, lint, gradual)\n7. TRADEOFFS + RISKS\n8. VERIFICATION — tests and a live path check\n\nLabel your proposal DESIGN-A. Be opinionated — pick a direction and commit.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Design A — Claude Opus 4.8, minimal additive path." }
+    },
+    {
+      "id": "design-b",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "prompt": "You are Design Agent B (Grok 4.5). Read the codebase and propose a concrete design for the problem below. Be specific: modules, types, file paths, migration steps.\n\nTAKE A DIFFERENT APPROACH than the obvious 'add a few fields to LiveNodeState'. Consider alternative decompositions: e.g. receipts as a first-class store separate from run JSON, event-bus emission of receipts, query APIs for agents, or stronger epistemic typing that affects edge semantics. Still must fit AgentRuntime (CCP, colony, existing runner) — not a greenfield rewrite.\n\n=== BRIEF ===\n{{nodes.decompose.result.reply}}\n\nYour design must include:\n1. ARCHITECTURE — components and data flow for derive vs infer + receipts\n2. DATA MODEL — TypeScript types for receipts and epistemic kinds\n3. INTERFACES — APIs / node contract / schemas\n4. INTEGRATION — specific files under src/workflows/ (and elsewhere if justified)\n5. EMISSION RULES — when receipts fire; required vs optional fields; sync vs async\n6. MIGRATION — path for existing blueprints\n7. TRADEOFFS + RISKS\n8. VERIFICATION — tests + live path\n\nLabel your proposal DESIGN-B. Be opinionated. Explicitly state how you diverge from a minimal LiveNodeState field-add.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Design B — Grok 4.5, alternate architecture on purpose." }
+    },
+    {
+      "id": "critique-ab",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "prompt": "You are an adversarial design critic. Review DESIGN-B (NOT your own work). Find weaknesses, missed requirements, integration problems, and architectural flaws. Reference the actual codebase (src/workflows/*) to check claims. Do not modify files.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-B (critiquing) ===\n{{nodes.design-b.result.reply}}\n\n=== DESIGN-A (comparison) ===\n{{nodes.design-a.result.reply}}\n\nFor each issue:\n- Name the problem\n- Why it is a problem (brief constraint or real code)\n- How to fix it\n- Severity: BLOCKING | SIGNIFICANT | MINOR\n\nAlso note what DESIGN-B does BETTER than DESIGN-A. Be fair.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Critic — Opus 4.8 critiques Design B." }
+    },
+    {
+      "id": "critique-ba",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "prompt": "You are an adversarial design critic. Review DESIGN-A (NOT your own work). Find weaknesses, missed requirements, integration problems, and architectural flaws. Reference the actual codebase (src/workflows/*) to check claims. Do not modify files.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-A (critiquing) ===\n{{nodes.design-a.result.reply}}\n\n=== DESIGN-B (comparison) ===\n{{nodes.design-b.result.reply}}\n\nFor each issue:\n- Name the problem\n- Why it is a problem (brief constraint or real code)\n- How to fix it\n- Severity: BLOCKING | SIGNIFICANT | MINOR\n\nAlso note what DESIGN-A does BETTER than DESIGN-B. Be fair.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Critic — Opus 4.8 critiques Design A." }
+    },
+    {
+      "id": "synthesize",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "runtime": "claude",
+        "model": "claude-opus-5",
+        "prompt": "You are the design synthesizer. Two independent agents proposed designs (A=Opus path, B=Grok path); two critics reviewed them. Produce the FINAL design a developer could implement in this repo without ambiguity. Do not modify files.\n\n=== ORIGINAL BRIEF ===\n{{nodes.decompose.result.reply}}\n\n=== DESIGN-A ===\n{{nodes.design-a.result.reply}}\n\n=== CRITIQUE OF DESIGN-A ===\n{{nodes.critique-ba.result.reply}}\n\n=== DESIGN-B ===\n{{nodes.design-b.result.reply}}\n\n=== CRITIQUE OF DESIGN-B ===\n{{nodes.critique-ab.result.reply}}\n\nSynthesize:\n1. DECISION: A, B, or HYBRID — and why (address critiques)\n2. ARCHITECTURE: final structure for derive/infer + receipts\n3. DATA MODEL: exact TypeScript types\n4. FILE PLAN: exact files to create/modify\n5. INTEGRATION POINTS: agent:run, core:exec, judge:score, run-store, HTTP/dashboard if any\n6. EMISSION + KIND RULES: required fields, defaults for old blueprints\n7. RESOLVED CRITIQUES: each BLOCKING/SIGNIFICANT item\n8. IMPLEMENTATION ORDER: PR-sized steps\n9. VERIFICATION: unit + one live workflow path (e.g. arxiv-monitor or exec-notify)\n\nBe implementation-ready. Prefer colony-safe, additive changes.",
+        "capabilities": "fs.read"
+      },
+      "meta": { "description": "Synthesizer — Opus 4.8 final design." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "✅ Adversarial design complete (receipts + derive/infer; A=opus-4-8, B=grok-4.5):\n\n{{nodes.synthesize.result.reply}}"
+      },
+      "meta": { "description": "Notify caller. No-ops if agent blank; skips on sync runs unless always." }
+    }
+  ],
+  "edges": [
+    { "from": "decompose", "to": "design-a" },
+    { "from": "decompose", "to": "design-b" },
+    { "from": "design-a", "to": "critique-ab" },
+    { "from": "design-b", "to": "critique-ab" },
+    { "from": "design-a", "to": "critique-ba" },
+    { "from": "design-b", "to": "critique-ba" },
+    { "from": "critique-ab", "to": "synthesize" },
+    { "from": "critique-ba", "to": "synthesize" },
+    { "from": "synthesize", "to": "notify" }
+  ]
+}

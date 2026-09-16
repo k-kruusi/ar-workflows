@@ -1,0 +1,264 @@
+{
+  "id": "adversarial-design-six-family",
+  "name": "Adversarial design — six weight families, ring critique, mechanical merge, opus synth",
+  "description": "Bespoke six-family pass (auth: Kevin, chat ask 2026-08-06). Six independent designers — claude-opus-4-8, grok-4.5 (runtime grok), and FOUR workerProfile-borrowed legs (kimi-1, qwen-1, deepseek-dorian, glm-geoff) — each design alone from an IDENTICAL prompt, so diversity is weights, not phrasing. Ring critique (each family critiques exactly one other family's proposal, O(N) not O(N^2)) keeps every proposal adversarially examined without the 30-node pairwise furnace. Fan-in is MECHANICAL (core:merge, on:always) — a partial panel degrades and SAYS SO via missing/present rosters, never dies silently. The opus synthesizer converges designs+critiques into one vetted spec and must record true attendance: KNOWN QUIRK — a FAILED upstream node leaves its {{nodes.*}} template literal unresolved (dependencies/task-graph/src/template.ts:22,35), which core:merge counts as PRESENT, so the synth prompt treats literal-template parts as absent. notify is condense:false because the spec IS the product (ask-resume precedent); a separate notify-fail node on on:failure keeps failed runs loud instead of silent. The three newest profiles (qwen-1, deepseek-dorian, glm-geoff) have never been workerProfile-borrowed before — this run is their shakedown; a dead leg is a finding, not a failure of the panel. Params (ALL REQUIRED — unfilled passes through literally and fails loudly): task, cwd (repo root, designers are fs.read ONLY), context (existing-machinery grounding pasted by the caller), agent (notify target).",
+  "nodes": [
+    {
+      "id": "design-opus",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-4-8",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are one of SIX independent designers from six different model weight families, each designing alone; you cannot see the others' work. Independence is the point: produce YOUR best design, not a compromise.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== EXISTING MACHINERY (claims to ground against) ===\n{{params.context}}\n\nBefore committing, READ the actual engine files named above in this directory. Any design that changes an existing contract must name the contract and justify the change.\n\nReply with a complete design document: (1) the goal-object schema, (2) exact engine changes (file + what changes), (3) start/stop/failure/park semantics, (4) token-economics invariants with the cost of each loop phase, (5) a NOT-BUILDING section. Cite file:line for every claim about existing behavior."
+      },
+      "meta": { "description": "Designer 1/6 — claude-opus-4-8, fresh session, fs.read only." }
+    },
+    {
+      "id": "design-grok",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are one of SIX independent designers from six different model weight families, each designing alone; you cannot see the others' work. Independence is the point: produce YOUR best design, not a compromise.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== EXISTING MACHINERY (claims to ground against) ===\n{{params.context}}\n\nBefore committing, READ the actual engine files named above in this directory. Any design that changes an existing contract must name the contract and justify the change.\n\nReply with a complete design document: (1) the goal-object schema, (2) exact engine changes (file + what changes), (3) start/stop/failure/park semantics, (4) token-economics invariants with the cost of each loop phase, (5) a NOT-BUILDING section. Cite file:line for every claim about existing behavior."
+      },
+      "meta": { "description": "Designer 2/6 — grok-4.5, fresh session, ar-tools (grok has no claude built-ins)." }
+    },
+    {
+      "id": "design-kimi",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "kimi-1",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are one of SIX independent designers from six different model weight families, each designing alone; you cannot see the others' work. Independence is the point: produce YOUR best design, not a compromise.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== EXISTING MACHINERY (claims to ground against) ===\n{{params.context}}\n\nBefore committing, READ the actual engine files named above in this directory. Any design that changes an existing contract must name the contract and justify the change.\n\nReply with a complete design document: (1) the goal-object schema, (2) exact engine changes (file + what changes), (3) start/stop/failure/park semantics, (4) token-economics invariants with the cost of each loop phase, (5) a NOT-BUILDING section. Cite file:line for every claim about existing behavior."
+      },
+      "meta": { "description": "Designer 3/6 — kimi k3 via workerProfile kimi-1 (proven in review-panel), fresh session." }
+    },
+    {
+      "id": "design-qwen",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "qwen-1",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are one of SIX independent designers from six different model weight families, each designing alone; you cannot see the others' work. Independence is the point: produce YOUR best design, not a compromise.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== EXISTING MACHINERY (claims to ground against) ===\n{{params.context}}\n\nBefore committing, READ the actual engine files named above in this directory. Any design that changes an existing contract must name the contract and justify the change.\n\nReply with a complete design document: (1) the goal-object schema, (2) exact engine changes (file + what changes), (3) start/stop/failure/park semantics, (4) token-economics invariants with the cost of each loop phase, (5) a NOT-BUILDING section. Cite file:line for every claim about existing behavior."
+      },
+      "meta": { "description": "Designer 4/6 — qwen3.8-max via workerProfile qwen-1. FIRST-EVER borrow of this profile — shakedown leg." }
+    },
+    {
+      "id": "design-deepseek",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "deepseek-dorian",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are one of SIX independent designers from six different model weight families, each designing alone; you cannot see the others' work. Independence is the point: produce YOUR best design, not a compromise.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== EXISTING MACHINERY (claims to ground against) ===\n{{params.context}}\n\nBefore committing, READ the actual engine files named above in this directory. Any design that changes an existing contract must name the contract and justify the change.\n\nReply with a complete design document: (1) the goal-object schema, (2) exact engine changes (file + what changes), (3) start/stop/failure/park semantics, (4) token-economics invariants with the cost of each loop phase, (5) a NOT-BUILDING section. Cite file:line for every claim about existing behavior."
+      },
+      "meta": { "description": "Designer 5/6 — deepseek via workerProfile deepseek-dorian. FIRST-EVER borrow — shakedown leg (cartridge is one commit old)." }
+    },
+    {
+      "id": "design-glm",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "glm-geoff",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are one of SIX independent designers from six different model weight families, each designing alone; you cannot see the others' work. Independence is the point: produce YOUR best design, not a compromise.\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\n=== EXISTING MACHINERY (claims to ground against) ===\n{{params.context}}\n\nBefore committing, READ the actual engine files named above in this directory. Any design that changes an existing contract must name the contract and justify the change.\n\nReply with a complete design document: (1) the goal-object schema, (2) exact engine changes (file + what changes), (3) start/stop/failure/park semantics, (4) token-economics invariants with the cost of each loop phase, (5) a NOT-BUILDING section. Cite file:line for every claim about existing behavior."
+      },
+      "meta": { "description": "Designer 6/6 — glm via workerProfile glm-geoff. FIRST-EVER borrow — shakedown leg (cartridge is one commit old)." }
+    },
+    {
+      "id": "merge-designs",
+      "type": "core:merge",
+      "timeoutMs": 30000,
+      "params": {
+        "parts": {
+          "opus": "{{nodes.design-opus.result.reply}}",
+          "grok": "{{nodes.design-grok.result.reply}}",
+          "kimi": "{{nodes.design-kimi.result.reply}}",
+          "qwen": "{{nodes.design-qwen.result.reply}}",
+          "deepseek": "{{nodes.design-deepseek.result.reply}}",
+          "glm": "{{nodes.design-glm.result.reply}}"
+        }
+      },
+      "meta": { "description": "Mechanical fan-in (never a model join). on:always edges: a dead leg degrades the panel and is rostered in missing — EXCEPT the known unresolved-literal quirk: a FAILED designer leaves its template literal in parts, which merge counts as present; synth corrects the roster." }
+    },
+    {
+      "id": "crit-grok",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are an independent adversarial critic. A designer from ANOTHER weight family (opus) proposed the design below. Your job is to REFUTE: find where it contradicts actual engine contracts, misses a failure mode, or spends tokens it claims to save.\n\n=== PROPOSAL (opus) ===\n{{nodes.design-opus.result.reply}}\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\nRead the ACTUAL files the proposal cites before objecting — an objection must be grounded or withdrawn. Reply MUST BEGIN with exactly one word: STRONG or WEAK, then numbered objections with file:line. STRONG means the design survives your best refutation attempt; do not give STRONG to be polite."
+      },
+      "meta": { "description": "Ring critique: grok critiques opus. Fresh session; skips if design-opus failed (default success edge)." }
+    },
+    {
+      "id": "crit-kimi",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "kimi-1",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are an independent adversarial critic. A designer from ANOTHER weight family (grok) proposed the design below. Your job is to REFUTE: find where it contradicts actual engine contracts, misses a failure mode, or spends tokens it claims to save.\n\n=== PROPOSAL (grok) ===\n{{nodes.design-grok.result.reply}}\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\nRead the ACTUAL files the proposal cites before objecting — an objection must be grounded or withdrawn. Reply MUST BEGIN with exactly one word: STRONG or WEAK, then numbered objections with file:line. STRONG means the design survives your best refutation attempt; do not give STRONG to be polite."
+      },
+      "meta": { "description": "Ring critique: kimi critiques grok." }
+    },
+    {
+      "id": "crit-qwen",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "qwen-1",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are an independent adversarial critic. A designer from ANOTHER weight family (kimi) proposed the design below. Your job is to REFUTE: find where it contradicts actual engine contracts, misses a failure mode, or spends tokens it claims to save.\n\n=== PROPOSAL (kimi) ===\n{{nodes.design-kimi.result.reply}}\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\nRead the ACTUAL files the proposal cites before objecting — an objection must be grounded or withdrawn. Reply MUST BEGIN with exactly one word: STRONG or WEAK, then numbered objections with file:line. STRONG means the design survives your best refutation attempt; do not give STRONG to be polite."
+      },
+      "meta": { "description": "Ring critique: qwen critiques kimi." }
+    },
+    {
+      "id": "crit-deepseek",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "deepseek-dorian",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are an independent adversarial critic. A designer from ANOTHER weight family (qwen) proposed the design below. Your job is to REFUTE: find where it contradicts actual engine contracts, misses a failure mode, or spends tokens it claims to save.\n\n=== PROPOSAL (qwen) ===\n{{nodes.design-qwen.result.reply}}\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\nRead the ACTUAL files the proposal cites before objecting — an objection must be grounded or withdrawn. Reply MUST BEGIN with exactly one word: STRONG or WEAK, then numbered objections with file:line. STRONG means the design survives your best refutation attempt; do not give STRONG to be polite."
+      },
+      "meta": { "description": "Ring critique: deepseek critiques qwen." }
+    },
+    {
+      "id": "crit-glm",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "workerProfile": "glm-geoff",
+        "tools": "ar-tools",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are an independent adversarial critic. A designer from ANOTHER weight family (deepseek) proposed the design below. Your job is to REFUTE: find where it contradicts actual engine contracts, misses a failure mode, or spends tokens it claims to save.\n\n=== PROPOSAL (deepseek) ===\n{{nodes.design-deepseek.result.reply}}\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\nRead the ACTUAL files the proposal cites before objecting — an objection must be grounded or withdrawn. Reply MUST BEGIN with exactly one word: STRONG or WEAK, then numbered objections with file:line. STRONG means the design survives your best refutation attempt; do not give STRONG to be polite."
+      },
+      "meta": { "description": "Ring critique: glm critiques deepseek." }
+    },
+    {
+      "id": "crit-opus",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-4-8",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are an independent adversarial critic. A designer from ANOTHER weight family (glm) proposed the design below. Your job is to REFUTE: find where it contradicts actual engine contracts, misses a failure mode, or spends tokens it claims to save.\n\n=== PROPOSAL (glm) ===\n{{nodes.design-glm.result.reply}}\n\n=== DESIGN PROBLEM ===\n{{params.task}}\n\nRead the ACTUAL files the proposal cites before objecting — an objection must be grounded or withdrawn. Reply MUST BEGIN with exactly one word: STRONG or WEAK, then numbered objections with file:line. STRONG means the design survives your best refutation attempt; do not give STRONG to be polite."
+      },
+      "meta": { "description": "Ring critique: opus critiques glm. Ring closes — every proposal examined by exactly one foreign family." }
+    },
+    {
+      "id": "merge-crits",
+      "type": "core:merge",
+      "timeoutMs": 30000,
+      "params": {
+        "parts": {
+          "grok-on-opus": "{{nodes.crit-grok.result.reply}}",
+          "kimi-on-grok": "{{nodes.crit-kimi.result.reply}}",
+          "qwen-on-kimi": "{{nodes.crit-qwen.result.reply}}",
+          "deepseek-on-qwen": "{{nodes.crit-deepseek.result.reply}}",
+          "glm-on-deepseek": "{{nodes.crit-glm.result.reply}}",
+          "opus-on-glm": "{{nodes.crit-opus.result.reply}}"
+        }
+      },
+      "meta": { "description": "Mechanical fan-in of the six critiques; same unresolved-literal caveat as merge-designs." }
+    },
+    {
+      "id": "synth",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-opus-4-8",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read",
+        "prompt": "You are the synthesizer — one adjudicator reading six independent designs and six adversarial critiques. Mechanical fan-in already preserved the independence; your job is convergence, NOT averaging.\n\n=== SIX DESIGNS ===\n{{nodes.merge-designs.result.text}}\n\n=== SIX CRITIQUES ===\n{{nodes.merge-crits.result.text}}\n\n=== ORIGINAL PROBLEM ===\n{{params.task}}\n\nRules: (0) Any part whose body is a literal {{nodes.*}} template placeholder is a FAILED leg — treat it as ABSENT and record the true attendance roster (designers and critics separately) at the top of your document. (1) Where a critique refuted a design claim with file:line, the refutation wins — drop or fix the claim. (2) Preserve genuine disagreements as named open questions; do not flatten them. (3) Output ONE vetted spec: goal-object schema, engine changes (file-level), start/stop/failure/park semantics, token-economics invariants, migration order, NOT-BUILDING section. (4) Credit each adopted element to its family of origin. (5) Ground contested claims by reading the cited files yourself.\n\nReply with ONLY the final spec."
+      },
+      "meta": { "description": "Opus adjudicator converges 6 designs + 6 critiques into one vetted spec. Independence dies here BY DESIGN — the product is a single spec; generation and critique already spent the independence budget." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "condense": false,
+        "message": "six-family adversarial design COMPLETE — run {{run.correlationId}}. True attendance roster lives at the top of the spec (merge rosters can be fooled by failed legs).\n\n{{nodes.synth.result.reply}}"
+      },
+      "meta": { "description": "condense:false — the spec IS the product (ask-resume precedent: condensing destroys the thing worth capturing)." }
+    },
+    {
+      "id": "notify-fail",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "condense": false,
+        "message": "six-family adversarial design FAILED — run {{run.correlationId}}. Read /workflow/run/{{run.correlationId}} for the failing node and reason. A failed synth means the designs and critiques still exist as node outputs — recover them, do not re-run blind."
+      },
+      "meta": { "description": "on:failure edge from synth — failed runs stay loud instead of silent (the exec-notify earned-marker doctrine)." }
+    }
+  ],
+  "edges": [
+    { "from": "design-opus", "to": "merge-designs", "on": "always" },
+    { "from": "design-grok", "to": "merge-designs", "on": "always" },
+    { "from": "design-kimi", "to": "merge-designs", "on": "always" },
+    { "from": "design-qwen", "to": "merge-designs", "on": "always" },
+    { "from": "design-deepseek", "to": "merge-designs", "on": "always" },
+    { "from": "design-glm", "to": "merge-designs", "on": "always" },
+    { "from": "design-opus", "to": "crit-grok" },
+    { "from": "design-grok", "to": "crit-kimi" },
+    { "from": "design-kimi", "to": "crit-qwen" },
+    { "from": "design-qwen", "to": "crit-deepseek" },
+    { "from": "design-deepseek", "to": "crit-glm" },
+    { "from": "design-glm", "to": "crit-opus" },
+    { "from": "crit-grok", "to": "merge-crits", "on": "always" },
+    { "from": "crit-kimi", "to": "merge-crits", "on": "always" },
+    { "from": "crit-qwen", "to": "merge-crits", "on": "always" },
+    { "from": "crit-deepseek", "to": "merge-crits", "on": "always" },
+    { "from": "crit-glm", "to": "merge-crits", "on": "always" },
+    { "from": "crit-opus", "to": "merge-crits", "on": "always" },
+    { "from": "merge-designs", "to": "synth" },
+    { "from": "merge-crits", "to": "synth" },
+    { "from": "synth", "to": "notify" },
+    { "from": "synth", "to": "notify-fail", "on": "failure" }
+  ]
+}

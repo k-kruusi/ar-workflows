@@ -1,0 +1,32 @@
+{
+  "id": "task-route",
+  "name": "Task router — envelope selection for gauntlet dispatch",
+  "description": "Routes a task to a seat ENVELOPE before any gauntlet fires: tier (junior/senior/architect), borrowed seat (live cartridge check, rotated preference glm-geoff → deepseek-dorian → qwen-1 → kimi-1), reviewer runtime, gate policy. Deterministic v1 — the cognitive-router (:3068) model branch is probed and reported, not spent. Params: task (REQUIRED — its leading word can force architect tier: design/decompose/architect/spec), confine? (comma paths, no spaces), gateCommand?, agent (notify target). Returns the envelope + reason + warnings via notify; read the run record for the full object. Consumed by the judge loop / dispatcher BEFORE firing build-gauntlet; the envelope's fields ARE build-gauntlet's params.",
+  "nodes": [
+    {
+      "id": "route",
+      "type": "route:envelope",
+      "timeoutMs": 30000,
+      "params": {
+        "task": "{{params.task}}",
+        "confine": "{{params.confine}}",
+        "gateCommand": "{{params.gateCommand}}"
+      },
+      "meta": { "description": "Deterministic envelope selection; fails loud with no available seat." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 60000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "condense": false,
+        "message": "🧭 task-route envelope — {{nodes.route.result.tier}}\nreason: {{nodes.route.result.reason}}\nseat: {{nodes.route.result.workerProfile}} | reviewer: {{nodes.route.result.reviewerRuntime}} | gateRequired: {{nodes.route.result.gateRequired}}\nwarnings: {{nodes.route.result.warnings}}\ncognitive-router: {{nodes.route.result.routerService}}"
+      },
+      "meta": { "description": "Deliver the envelope to the dispatching agent." }
+    }
+  ],
+  "edges": [
+    { "from": "route", "to": "notify" }
+  ]
+}

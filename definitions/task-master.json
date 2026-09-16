@@ -1,0 +1,37 @@
+{
+  "id": "task-master",
+  "name": "Task master — design then ship (DAG-of-DAGs)",
+  "description": "Thin 2-node orchestration: adversarial-design produces a vetted spec, review-gauntlet implements and ships it. Each node is a pointer to a proven workflow, not a copy of its internal agent:run chain. Params: task (what to design+build), cwd (repo/worktree for both sub-workflows), context? (additional background/constraints passed to adversarial-design).",
+  "nodes": [
+    {
+      "id": "decompose-and-design",
+      "type": "workflow:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "workflow": "adversarial-design",
+        "params": {
+          "task": "{{params.task}}",
+          "cwd": "{{params.cwd}}",
+          "context": "{{params.context}}"
+        }
+      },
+      "meta": { "description": "Runs adversarial-design end-to-end; surfaces synthesize node's {reply, sessionId}." }
+    },
+    {
+      "id": "ship-it",
+      "type": "workflow:run",
+      "timeoutMs": 28800000,
+      "params": {
+        "workflow": "review-gauntlet",
+        "params": {
+          "task": "{{nodes.decompose-and-design.result.reply}}",
+          "cwd": "{{params.cwd}}"
+        }
+      },
+      "meta": { "description": "Runs review-gauntlet with the synthesized design as task; surfaces ship node's {reply}." }
+    }
+  ],
+  "edges": [
+    { "from": "decompose-and-design", "to": "ship-it" }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "id": "panel-remote-fix",
+  "name": "Panel-remote fix — one Grok lane converts one panel to remote-safe rendering",
+  "description": "Panel-remote program lane (auth: Kevin, 'do them all … burn that grok token usage', 2026-08-03; orchestrated by kimi-2). ONE grok-4.5 agent:run converts one panel package to the remote-safe fetch pattern (postMessage bridge / host-derived origin — never a bare loopback literal), rebuilds its bundle, and safe-commits ONLY its own package. A deterministic gate (scripts/panel-remote-verify.mjs via core:exec + core:gate) decides pass; failure routes to one repair lane with the verifier's output, then a final gate. Notify closes the loop. Params (REQUIRED): panel (package name), notes (orchestrator's scan facts), notify (container to whisper). Optional: verify_flags (e.g. '--allow-unspawned'). Standard async: POST /workflow {\"workflow\":\"panel-remote-fix\",\"async\":true,\"fresh\":true,\"params\":{\"panel\":\"atlas\",\"notes\":\"...\",\"notify\":\"kimi-2\"}}. SHARED-TREE RULES the lane must obey: services.ts is ORCHESTRATOR-OWNED (never edit); commit via scripts/safe-commit.ps1 with explicit paths (never git commit -a / git add -A).",
+  "nodes": [
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "capabilities": "fs.read,fs.write,shell",
+        "observe": true,
+        "prompt": "TIMEBOX (hard): limited wall time. No open-ended crawling — read the panel's fetch layer, fix it, rebuild, verify, commit. ~15 tool rounds max. A short honest blocker report beats a timeout.\n\nYou are one lane of the panel-remote program (auth: Kevin, 'do them all'; orchestrated by kimi-2). GOAL: make the {{params.panel}} panel render WITH LIVE DATA in the agentruntime dashboard from a REMOTE browser (phone over Tailscale).\n\nARCHITECTURE (verified by the orchestrator — do not re-litigate, do not redesign):\n- The dashboard renders a panel either directIframe (own origin; port tailscale-forwarded) or as a sandboxed srcdoc bundle. For srcdoc it now prefers the Vite proxyPath from SERVICE_REGISTRY (packages/dashboard/src/lib/services.ts), which is same-origin and remote-safe. services.ts is ORCHESTRATOR-OWNED — never edit it.\n- Inside a srcdoc panel, globalThis.__panelFetch__ (injected by packages/dashboard/src/lib/panel-runtime.ts) is a postMessage fetch bridge: RELATIVE paths resolve against the panel's proxy base and ride the dashboard origin — this is THE remote-safe pattern. Canonical example: packages/compaction/src/panel/utils.ts (panelFetch). Another: packages/zohar/src/panel/bridge.ts.\n- A panel fetch of 'http://localhost:<port>' or 'http://127.0.0.1:<port>' dials the PHONE's own loopback when remote — broken. When an absolute URL is unavoidable (standalone load outside the dashboard), derive the host from window.location.hostname with loopback only as fallback — see serviceOrigin() in packages/dashboard/src/lib/services.ts.\n\nYOUR TARGET: packages/{{params.panel}} (panel source in src/panel, plus its server routes if the panel's own API needs adjusting).\nOrchestrator's scan facts about this panel: {{params.notes}}\n\nDO, in order:\n1. Read the panel's fetch layer (index/panel files, utils/bridge, hooks). Find every direct loopback absolute-URL fetch.\n2. Convert to the bridge pattern: a panelFetch(path) helper using globalThis.__panelFetch__ with RELATIVE paths, falling back to plain fetch with a window.location.hostname-derived origin for standalone use. If a bridge helper already exists, use it and only fix the URLs that bypass it.\n3. Rebuild the panel bundle (panel.build.js or the package's build:panel script — check package.json).\n4. Run the gate: node scripts/panel-remote-verify.mjs {{params.panel}} {{params.verify_flags}} — iterate until it prints PASS.\n5. Commit ONLY your package's files: powershell scripts/safe-commit.ps1 -m \"panel-remote({{params.panel}}): <what changed> (auth: Kevin, panel-remote program)\" -- packages/{{params.panel}}\n   NEVER git commit -a, NEVER git add -A — the tree is shared with other live agents; a shared-index sweep steals their work.\n6. Leave a scent header on the main panel file you edited (// --- // scent: ... block, agent: grok-panel-remote, did: one line citing the commit).\n\nReply with a compact digest: files changed | verify verdict | commit hash | honest blockers. ClaimsBlock stance if you make coverage claims."
+      },
+      "meta": { "description": "Fix lane — grok-4.5 + ar-tools converts one panel to the remote-safe pattern and safe-commits it." }
+    },
+    {
+      "id": "verify",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "node scripts/panel-remote-verify.mjs {{params.panel}} {{params.verify_flags}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "timeoutMs": 600000
+      },
+      "meta": { "description": "Deterministic gate — registry + bare-loopback + build. ok:false is a RESULT, the gate node branches on it." }
+    },
+    {
+      "id": "gate",
+      "type": "core:gate",
+      "params": { "open": "{{nodes.verify.result.ok}}" },
+      "meta": { "description": "Pass → notify-pass. Fail → one repair lane." }
+    },
+    {
+      "id": "repair",
+      "type": "agent:run",
+      "timeoutMs": 1800000,
+      "params": {
+        "runtime": "grok",
+        "model": "grok-4.5",
+        "tools": "ar-tools",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "capabilities": "fs.read,fs.write,shell",
+        "observe": true,
+        "prompt": "TIMEBOX (hard): ~10 tool rounds. Fix ONLY what the gate named.\n\nYou are the REPAIR lane for the panel-remote program. A previous lane worked packages/{{params.panel}} and reported:\n{{nodes.fix.result.reply}}\n\nThe deterministic gate then FAILED with:\n{{nodes.verify.result.stdout}}\n{{nodes.verify.result.stderr}}\n\nAddress exactly those FAIL lines — no more, no redesign. Rules: bridge pattern via globalThis.__panelFetch__ with relative paths (example: packages/compaction/src/panel/utils.ts); never a bare loopback literal without window.location.hostname derivation in the same file; never edit packages/dashboard/src/lib/services.ts (orchestrator-owned); rebuild the panel bundle; re-run node scripts/panel-remote-verify.mjs {{params.panel}} {{params.verify_flags}} until PASS; commit ONLY packages/{{params.panel}} via powershell scripts/safe-commit.ps1 (never git commit -a / git add -A).\n\nReply compactly: what you changed | verify verdict | commit hash or honest blocker."
+      },
+      "meta": { "description": "Repair lane — one grok pass scoped to the gate's exact FAIL lines." }
+    },
+    {
+      "id": "verify2",
+      "type": "core:exec",
+      "timeoutMs": 900000,
+      "params": {
+        "command": "node scripts/panel-remote-verify.mjs {{params.panel}} {{params.verify_flags}}",
+        "cwd": "D:/claudeplayground/agentruntime/agentruntime",
+        "timeoutMs": 600000
+      },
+      "meta": { "description": "Re-gate after repair." }
+    },
+    {
+      "id": "gate2",
+      "type": "core:gate",
+      "params": { "open": "{{nodes.verify2.result.ok}}" },
+      "meta": { "description": "Pass → notify-repaired. Fail → notify-fail (human/orchestrator picks it up)." }
+    },
+    {
+      "id": "notify-pass",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "always": true,
+        "message": "✅ panel-remote({{params.panel}}) PASS first try.\n\nFIX DIGEST:\n{{nodes.fix.result.reply}}\n\nGATE:\n{{nodes.verify.result.stdout}}"
+      },
+      "meta": { "description": "Close the loop — clean pass." }
+    },
+    {
+      "id": "notify-repaired",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "always": true,
+        "message": "✅ panel-remote({{params.panel}}) PASS after repair.\n\nFIX DIGEST:\n{{nodes.fix.result.reply}}\n\nREPAIR DIGEST:\n{{nodes.repair.result.reply}}\n\nGATE:\n{{nodes.verify2.result.stdout}}"
+      },
+      "meta": { "description": "Close the loop — repaired pass." }
+    },
+    {
+      "id": "notify-fail",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.notify}}",
+        "always": true,
+        "message": "❌ panel-remote({{params.panel}}) FAIL after fix+repair — needs a sharper lane or a human.\n\nFIX DIGEST:\n{{nodes.fix.result.reply}}\n\nREPAIR DIGEST:\n{{nodes.repair.result.reply}}\n\nFINAL GATE:\n{{nodes.verify2.result.stdout}}\n{{nodes.verify2.result.stderr}}"
+      },
+      "meta": { "description": "Close the loop — honest failure with both digests and the gate output." }
+    }
+  ],
+  "edges": [
+    { "from": "fix", "to": "verify" },
+    { "from": "verify", "to": "gate" },
+    { "from": "gate", "to": "notify-pass", "on": "success" },
+    { "from": "gate", "to": "repair", "on": "failure" },
+    { "from": "repair", "to": "verify2" },
+    { "from": "verify2", "to": "gate2" },
+    { "from": "gate2", "to": "notify-repaired", "on": "success" },
+    { "from": "gate2", "to": "notify-fail", "on": "failure" }
+  ]
+}

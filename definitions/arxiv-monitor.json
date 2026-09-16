@@ -1,0 +1,50 @@
+{
+  "id": "arxiv-monitor",
+  "name": "arXiv monitor — fetch newest, judge relevance to agentruntime, whisper digest",
+  "description": "Daily(ish) arXiv triage: a deterministic fetch node pulls the newest `count` papers from `categories` (default cs.AI) via scripts/arxiv-monitor.mjs, dedups against data/arxiv-seen.json (safe to run many times a day — arXiv only announces once per weekday, so extra runs are no-op), a judge agent reads the unseen abstracts against the actual repo and shortlists what could change how agentruntime is built, and the digest is whispered to `agent`. Fetch marks items seen immediately; if the judge node fails, the batch is preserved at data/arxiv-inbox/latest.json (it will NOT resurface on the next run). Params: count (papers to pull, default 30, cap 100), categories (comma-separated arXiv cats, default cs.AI), cwd (the agentruntime repo root — judge reads it, never writes), agent (who receives the digest). Preset 'arxiv-daily' has the standard values — prefer running that.",
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "core:exec",
+      "timeoutMs": 120000,
+      "params": {
+        "command": "node scripts/arxiv-monitor.mjs --count {{params.count}} --categories {{params.categories}}",
+        "cwd": "{{params.cwd}}"
+      },
+      "meta": {
+        "description": "Deterministic fetch + dedup. stdout is JSON: { fetched, new, items } or { error } — never ambiguous. Non-zero exit still flows downstream as ok:false; the judge prompt handles the error shape."
+      }
+    },
+    {
+      "id": "judge",
+      "type": "agent:run",
+      "timeoutMs": 1200000,
+      "params": {
+        "runtime": "claude",
+        "model": "claude-sonnet-5",
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are the research-triage judge for the AgentRuntime project. Your working directory IS the agentruntime repo — read CLAUDE.md (and peek at packages/ or papers/ if needed) to ground yourself in what the project actually is: a container runtime for AI agents — multi-agent stigmergic coordination, MCP tool mesh, workflow DAGs of agent turns, session/memory/compaction management, multi-runtime dispatch (Claude/Grok/local models), agent training and distillation (residents), local GPU inference. Do NOT write or modify any files.\n\nBelow is a JSON batch of newly published arXiv papers (already deduplicated — you only see papers no prior run has judged).\n\n=== FEED ===\n{{nodes.fetch.result.stdout}}\n\nIf the JSON contains an `error` field, reply with exactly: FEED-ERROR: <the error> and stop.\nIf `new` is 0, reply with exactly: NO-NEW-ITEMS (fetched <fetched>, all previously seen) and stop.\n\nOtherwise triage. Be strict: a paper is RELEVANT only if it could change how a specific part of agentruntime is built, or validate/refute one of its design choices. General AI novelty is not relevance.\n\nReply format:\nRELEVANT (<n> of <new>):\nFor each relevant paper, one block:\n- <TITLE> — <link>\n  <1-2 sentences: what it contributes, and WHICH agentruntime subsystem it touches (name the package/dir).>\nOrder by relevance, strongest first.\nEnd with: SKIPPED: <count> — <one clause on the dominant reason>.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Judge — fresh Sonnet session, reads the repo for grounding, shortlists with subsystem mapping. Read-only by instruction."
+      }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "📡 arXiv monitor ({{params.categories}}, newest {{params.count}}):\n\n{{nodes.judge.result.reply}}"
+      },
+      "meta": {
+        "description": "Fire-and-forget digest back to the operator's conversation."
+      }
+    }
+  ],
+  "edges": [
+    { "from": "fetch", "to": "judge" },
+    { "from": "judge", "to": "notify" }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "id": "quick-fix",
+  "name": "Quick fix — Haiku works, Sonnet verifies, Haiku fixes",
+  "description": "Lightweight 3-node workflow for bounded tasks: a cheap model does the work, a mid-tier model reviews once, and if rejected the cheap model fixes the issues. No second reviewer, no ship ceremony. Use for rebases, typo fixes, config changes, lockfile updates — anything where the task is obvious and one review pass is enough. Params: task (what to do), cwd (working directory).",
+  "nodes": [
+    {
+      "id": "work",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are completing a quick task in this directory.\n\n=== TASK ===\n{{params.task}}\n\nComplete the task now. Be precise and minimal — do exactly what's asked, nothing more. When done, reply with a short summary of what you changed.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": { "description": "Worker — Haiku, cheap and fast. Does the bounded task." }
+    },
+    {
+      "id": "verify",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-sonnet-5",
+        "prompt": "You are verifying a quick fix. Another agent just completed this task:\n\n=== TASK ===\n{{params.task}}\n\n=== WHAT WAS DONE ===\n{{nodes.work.result.reply}}\n\nCheck the actual files in this directory. Verify the work is correct and complete. Run tsc --noEmit if TypeScript files were changed.\n\nReply with APPROVE if correct, or REJECT with specific problems.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Verifier — Sonnet, one review pass. Sanity check, not adversarial." }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "sessionId": "{{nodes.work.result.sessionId}}",
+        "prompt": "A reviewer checked your work:\n\n=== REVIEW ===\n{{nodes.verify.result.reply}}\n\nIf the reviewer APPROVED, leave everything as-is and reply 'No changes needed.' Otherwise, address every issue raised. Reply with what you fixed.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": { "description": "Fix — Haiku, resumes the worker's session. Addresses review feedback if any." }
+    },
+    {
+      "id": "ship",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "sessionId": "{{nodes.fix.result.sessionId}}",
+        "prompt": "Ship your work:\n1. Check what you changed: git status --short\n2. Land it — the ONLY approved path:\n   bash $(git rev-parse --show-toplevel)/agentruntime/scripts/ship-guard.sh -m 'conventional message' <each changed path>\n   It refuses to push main/master, refuses to ship from the shared main checkout, and takes explicit paths only (there is no -A — a shared-index sweep steals other agents' in-flight work). If it REFUSES, STOP and report its message verbatim; do not route around it with raw git.\n3. If a PR already exists for this branch, just push. If not, open one: gh pr create --fill --base main\n\nReply with the PR URL or 'pushed to existing PR'. If nothing changed, reply: NO-CHANGES.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Ship — Haiku, resumes session. Commits + pushes." }
+    }
+  ],
+  "edges": [
+    { "from": "work", "to": "verify" },
+    { "from": "verify", "to": "fix" },
+    { "from": "fix", "to": "ship" }
+  ]
+}

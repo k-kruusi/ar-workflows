@@ -1,0 +1,177 @@
+{
+  "id": "divergent-reasoning",
+  "name": "Divergent reasoning — multi-runtime generation, judge, implement, review, ship",
+  "description": "End-to-end workflow: an orchestrator structures the problem, three agents on DIFFERENT runtimes (Claude Sonnet + Grok Build + Grok Composer Fast) generate independent solutions in parallel, a judge synthesizes the best plan, a coder implements it, a reviewer accepts or rejects, fixes are applied, then ship. Structural diversity from different model weights, not prompt variation. Params: task (the work), cwd (a prepared git worktree — lifecycle is the caller's). ||| MODEL-DIVERSITY CORRECTION (2026-08-05): grok CLI 0.2.101 retired grok-build and grok-composer-2.5-fast; `grok models` now lists exactly one model, grok-4.5. Both grok legs therefore run THE SAME WEIGHTS. This workflow's original premise was three distinct families; it is now three independent SAMPLES across TWO families (claude + grok). Independence count 2, not 3 — see papers/agentruntime/invariant-3-independent-verification.md. To restore a third family, repoint reason-grok-fast at `runtime: claude` + `workerProfile: kimi-1` (an ephemeral k3 worker; see review-panel.json). Left as a decision for this workflow's owner, not taken here.",
+  "nodes": [
+    {
+      "id": "orchestrate",
+      "type": "agent:run",
+      "timeoutMs": 300000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-opus-5",
+        "prompt": "You are an orchestrator. Your job is to take a task and produce a structured brief that three independent planning agents will work from. Read the codebase in this directory to understand the context.\n\n=== TASK ===\n{{params.task}}\n\nProduce a brief with these sections:\nPROBLEM: what exactly needs to change and why\nSUCCESS CRITERIA: specific, testable conditions that mean the task is done\nCONSTRAINTS: what must not break, performance/compatibility requirements, files that must not be touched\nSCOPE: what's in scope and what's explicitly out\n\nBe precise. The planning agents will read this brief and the codebase independently — they won't talk to each other.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Orchestrator — Opus structures the problem into a crisp brief with success criteria and constraints."
+      }
+    },
+    {
+      "id": "reason-claude",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "claude",
+        "cwd": "{{params.cwd}}",
+        "model": "claude-sonnet-5",
+        "prompt": "You are an independent planning agent (Agent A). Read the codebase in this directory and produce a concrete implementation plan for the task described below. Name exact files, functions, and the sequence of changes.\n\n=== BRIEF ===\n{{nodes.orchestrate.result.reply}}\n\nRespond with ONLY the plan. Label it PLAN-A.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Agent A — Claude Sonnet, fresh session. Explores one solution space."
+      }
+    },
+    {
+      "id": "reason-grok",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "You are an independent planning agent (Agent B). Read the codebase in this directory and produce a concrete implementation plan for the task described below. Name exact files, functions, and the sequence of changes.\n\n=== BRIEF ===\n{{nodes.orchestrate.result.reply}}\n\nRespond with ONLY the plan. Label it PLAN-B.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Agent B — Grok Build, fresh session. Different weights see a different solution space."
+      }
+    },
+    {
+      "id": "reason-grok-fast",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "runtime": "grok",
+        "cwd": "{{params.cwd}}",
+        "model": "grok-4.5",
+        "prompt": "You are an independent planning agent (Agent C). Read the codebase in this directory and produce a concrete implementation plan for the task described below. Name exact files, functions, and the sequence of changes.\n\n=== BRIEF ===\n{{nodes.orchestrate.result.reply}}\n\nRespond with ONLY the plan. Label it PLAN-C.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Agent C — Grok Composer 2.5 Fast, fresh session. Third independent perspective from a speed-optimized model."
+      }
+    },
+    {
+      "id": "judge",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-opus-5",
+        "prompt": "You are an independent judge. Three planning agents — Claude Sonnet, Grok Build, and Grok Composer Fast — each produced an implementation plan for the same task, working from the same brief but independently. You have access to the same codebase.\n\n=== BRIEF ===\n{{nodes.orchestrate.result.reply}}\n\n=== PLAN-A (Claude Sonnet) ===\n{{nodes.reason-claude.result.reply}}\n\n=== PLAN-B (Grok Build) ===\n{{nodes.reason-grok.result.reply}}\n\n=== PLAN-C (Grok Composer Fast) ===\n{{nodes.reason-grok-fast.result.reply}}\n\nEvaluate each plan against the SUCCESS CRITERIA and CONSTRAINTS from the brief. Check their file/function references against the actual codebase.\n\nYour reply MUST follow this format:\nWINNER: PLAN-A or PLAN-B or PLAN-C or HYBRID\nREASONING: why, with specific references to the criteria\nFINAL PLAN: the complete plan the implementer should execute\nBORROWED: what was taken from the other plans (if hybrid)\nREJECTED: what was wrong with each losing approach",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Judge — Opus, fresh session. Structurally independent from all three generators."
+      }
+    },
+    {
+      "id": "implement",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "prompt": "You are implementing a plan in THIS directory — an isolated git worktree. The plan was selected by an independent judge from three competing proposals.\n\n=== PLAN ===\n{{nodes.judge.result.reply}}\n\nImplement the FINAL PLAN section now. Do NOT commit, push, or open a PR — just make the changes. When done, reply with a summary of what you changed.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Implementer — default model, fresh session. Session resumed by fix and ship nodes."
+      }
+    },
+    {
+      "id": "review",
+      "type": "agent:run",
+      "timeoutMs": 3600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-opus-5",
+        "prompt": "You are an independent reviewer. An implementation was made based on a judged plan. You have the original brief with success criteria, and access to the actual files.\n\n=== BRIEF ===\n{{nodes.orchestrate.result.reply}}\n\n=== WHAT WAS IMPLEMENTED ===\n{{nodes.implement.result.reply}}\n\nRead the ACTUAL changed files. Check the implementation against EVERY success criterion and constraint from the brief.\n\nYour reply MUST BEGIN with exactly one token: APPROVE or REJECT.\nIf REJECT, list each specific problem, the file it's in, and what must change.",
+        "capabilities": "fs.read"
+      },
+      "meta": {
+        "description": "Reviewer — Opus, fresh session. Reviews against the orchestrator's success criteria, not the plan."
+      }
+    },
+    {
+      "id": "fix",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.implement.result.sessionId}}",
+        "prompt": "A reviewer assessed your implementation:\n\n=== REVIEW ===\n{{nodes.review.result.reply}}\n\nIf APPROVED, leave the work as-is. Otherwise address EVERY point raised. Do NOT commit or push. Reply with what you changed.",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": {
+        "description": "Fix — resumes the implementer's session. Addresses review feedback."
+      }
+    },
+    {
+      "id": "ship",
+      "type": "agent:run",
+      "timeoutMs": 7200000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "sessionId": "{{nodes.fix.result.sessionId}}",
+        "prompt": "Your work has been reviewed and revised. Ship it:\n1. Check what you changed: git status --short\n2. Land it — the ONLY approved path:\n   bash $(git rev-parse --show-toplevel)/agentruntime/scripts/ship-guard.sh -m 'conventional message' <each changed path>\n   It refuses to push main/master, refuses to ship from the shared main checkout, and takes explicit paths only (there is no -A — a shared-index sweep steals other agents' in-flight work). If it REFUSES, STOP and report its message verbatim; do not route around it with raw git.\n3. gh pr create --fill --base main\n\nReply with ONLY the PR URL. If nothing changed, reply: NO-CHANGES.",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": {
+        "description": "Ship — resumes the implementer's session. Commits + opens PR."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "orchestrate",
+      "to": "reason-claude"
+    },
+    {
+      "from": "orchestrate",
+      "to": "reason-grok"
+    },
+    {
+      "from": "orchestrate",
+      "to": "reason-grok-fast"
+    },
+    {
+      "from": "reason-claude",
+      "to": "judge"
+    },
+    {
+      "from": "reason-grok",
+      "to": "judge"
+    },
+    {
+      "from": "reason-grok-fast",
+      "to": "judge"
+    },
+    {
+      "from": "judge",
+      "to": "implement"
+    },
+    {
+      "from": "implement",
+      "to": "review"
+    },
+    {
+      "from": "review",
+      "to": "fix"
+    },
+    {
+      "from": "fix",
+      "to": "ship"
+    }
+  ]
+}

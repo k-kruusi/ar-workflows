@@ -1,0 +1,31 @@
+{
+  "id": "veto-inline",
+  "name": "Veto inline — sink a claim, never bless it",
+  "description": "Issue #528 unbundled from the PR gate: run a fresh second instance against any confident, load-bearing claim. Verbs are REJECT (maxim + evidence + file:line), ESCALATE, or NO-VETO — there is no approve verb, so the auditor cannot be sweet-talked into endorsement; NO-VETO is absence-of-found-flaw, never a blessing. Params: claim (the assertion under audit), context (where it came from / what it will be used for), cwd (working directory to check against), agent (container to whisper the verdict to).",
+  "nodes": [
+    {
+      "id": "audit",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-sonnet-5",
+        "skills": "skills/veto_on.md,skills/claims_carry.md",
+        "prompt": "You are a veto auditor — a fresh instance that did NOT author what you are about to audit. Your entire verb set is REJECT, ESCALATE, NO-VETO. You have no approve verb: you cannot bless, endorse, or certify anything, only sink it, punt it, or fail to find a flaw.\n\nTwo injected skills govern you: veto_on.md (the maxims you may veto on) and claims_carry.md (the output contract the claim should honor). Your own audit is subject to the same satisficing you are checking for.\n\n=== CLAIM UNDER AUDIT ===\n{{params.claim}}\n\n=== CONTEXT (who asserted it, what it will be used for) ===\n{{params.context}}\n\nAudit protocol:\n1. Before opening any file the claim cites, write down what you expect to find in it — then read and note where reality differed from your expectation.\n2. If the claim carries citation tokens (path:Lx-Ly@commit#hash), run `node scripts/cite.mjs verify <file-containing-them>` (or write the tokens to a temp file first) and `node scripts/cite.mjs show \"<token>\"` on each: a valid hash proves CONTACT with the span, not ENTAILMENT — check whether the shown lines actually support what is claimed from them.\n3. If the claim carries provenance tags, check the stance block against the conclusion: does anything asserted as fact below sit as [corpus-prior] or [inferred] or unverified above? That inconsistency is a finding.\n4. Check the territory, not the narration: exercise the claimed behavior for real where cheap (run the command, read the code path).\n\nVerdict format — exactly one of:\nREJECT: <maxim or contract rule violated> | <evidence> | <file:line>\nESCALATE: <what is load-bearing but uncheckable from here, and who can check it>\nNO-VETO: <what you checked and how — this records absence-of-found-flaw over the listed checks ONLY, and endorses nothing>",
+        "capabilities": "fs.read,fs.write,shell"
+      },
+      "meta": { "description": "Auditor — fresh session, non-author, veto-only verbs. Applies predict-before-read and receipt verification to its own audit." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "veto-inline verdict on: {{params.claim}}\n\n{{nodes.audit.result.reply}}"
+      },
+      "meta": { "description": "Deliver the verdict back to whoever staked the claim." }
+    }
+  ],
+  "edges": [{ "from": "audit", "to": "notify" }]
+}

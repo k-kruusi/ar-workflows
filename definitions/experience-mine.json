@@ -1,0 +1,14 @@
+{
+  "id": "experience-mine",
+  "name": "Experience-memory nightly beat",
+  "description": "Blueprint: the experience-memory pull-beat (mine + propose). Scans data/workflow-runs and session transcripts for failed/successful trajectory pairs, mines corrections into the hash-chained store, and prints genesis graduation cards for any promoted corrections. PULL ONLY — never dispatches fleet work. Schedule it via a chrono kind=workflow schedule; run it by hand with `node scripts/experience-mine.mjs`. Honest counts land in data/experience-memory/state/last-beat.json and on the bus as @agentruntime/experience-memory:beat. Non-zero exit propagates: the beat failing IS the signal.",
+  "nodes": [
+    {
+      "id": "beat",
+      "type": "core:exec",
+      "params": { "command": "node scripts/experience-mine.mjs" },
+      "timeoutMs": 1800000
+    }
+  ],
+  "edges": []
+}

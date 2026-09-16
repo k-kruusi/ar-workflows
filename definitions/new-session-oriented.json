@@ -1,0 +1,73 @@
+{
+  "id": "new-session-oriented",
+  "name": "New Session (oriented)",
+  "description": "Same lifecycle as new-session, but the CALLER'S payload IS the anchor message — so it arrives as the session's FIRST turn instead of its second. Not orientation-only despite the id: every panel path that has something to say to the new session rides this (orientation document, session summary, skipped-orientation note), because the alternative — reset with a bare greeting, then send the payload — gives the agent a turn 1 it must answer before the payload exists. Param is `message` for that reason; it was `document` while orientation was the only caller. KEEP IN SYNC WITH new-session.json: these two differ ONLY in the anchor node's message (a test pins that — src/__tests__/new-session-definitions.test.ts).",
+  "nodes": [
+    {
+      "id": "cancel",
+      "type": "supervisor:cancel",
+      "params": { "name": "{{params.agent}}" },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/container.ts",
+        "line": 904,
+        "description": "Cancel any in-flight request so resetConversation doesn't race with execute()"
+      }
+    },
+    {
+      "id": "reset",
+      "type": "supervisor:resetConversation",
+      "params": { "name": "{{params.agent}}" },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/container.ts",
+        "line": 920,
+        "description": "Kill adapter and process tree, clear session ID and history"
+      }
+    },
+    {
+      "id": "clear-session-file",
+      "type": "supervisor:clearSessionFile",
+      "params": { "name": "{{params.agent}}" },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/http-api.ts",
+        "line": 1577,
+        "description": "Clear persisted session ID file so supervisor restart doesn't resurrect stale session"
+      }
+    },
+    {
+      "id": "flush-stats",
+      "type": "supervisor:flushStats",
+      "params": {},
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/container-manager.ts",
+        "line": 1599,
+        "description": "Persist stats immediately so stats.json reflects sessionId: null"
+      }
+    },
+    {
+      "id": "anchor",
+      "type": "supervisor:send",
+      "params": {
+        "name": "{{params.agent}}",
+        "message": "{{params.message}}"
+      },
+      "meta": {
+        "package": "agentruntime",
+        "file": "src/http-api.ts",
+        "line": 1589,
+        "description": "The caller's payload IS the anchor. new-session.json sends a bare greeting here and the panel then sent the payload 1500ms later — but supervisor:send does not await a reply, so the agent began turn 1 on the greeting alone and CLAUDE.md tells a freshly-greeted agent to run scripts/orient.mjs itself. The payload could therefore never be part of turn 1, and the agent duplicated the whole probe by hand before it arrived (measured 2026-07-30: doc generated 11:17, self-orient 11:18, doc delivered as turn 2 at 11:18:54). One message, one turn, no duplicate. FIXED 2026-07-31: supervisor:send really is fire-and-forget now — the impl awaited the reply (caps.ts) while SupervisorCaps had always declared it did not, so this anchor timed out at 120s while the agent it had just anchored worked for 20 minutes (wf-1785473994222) and that turn was orphaned. 2026-08-17: the SAME two-turn race was still live on the OTHER two panel exits (Skip, Summarize) — they were never moved off reset-then-send, and reproduced it verbatim (greeting turn 1, self-orient, note as turn 2). Both now anchor through here; `document` renamed `message` because it is no longer orientation-only."
+      },
+      "timeoutMs": 120000
+    }
+  ],
+  "edges": [
+    { "from": "cancel", "to": "reset", "on": "always" },
+    { "from": "reset", "to": "clear-session-file" },
+    { "from": "reset", "to": "flush-stats" },
+    { "from": "clear-session-file", "to": "anchor" },
+    { "from": "flush-stats", "to": "anchor" }
+  ]
+}

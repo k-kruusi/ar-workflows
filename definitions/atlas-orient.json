@@ -1,0 +1,29 @@
+{
+  "id": "atlas-orient",
+  "name": "Atlas dogfood — a fresh agent orients via atlas, then verifies",
+  "description": "Adoption proof for packages/atlas: a cheap model orients in the monorepo using ONLY the atlas CLI first, answers a real question, then verifies atlas's answer against the actual files. Measures whether the map actually shortens orientation. Params: question (what to answer), scope (atlas scope to show), cwd (monorepo root), agent (who to notify with the result).",
+  "nodes": [
+    {
+      "id": "orient",
+      "type": "agent:run",
+      "timeoutMs": 600000,
+      "params": {
+        "cwd": "{{params.cwd}}",
+        "model": "claude-haiku-4-5-20251001",
+        "prompt": "You are a brand-new agent in this monorepo and you know NOTHING about its layout.\n\n{{params.orient}}\n\nThen answer this question:\n\n=== QUESTION ===\n{{params.question}}\n\nVERIFY your answer by reading the actual file(s) before committing to it.\n\nReply in exactly this shape:\nA) ORIENTATION: <how you found your way — tools/commands used, in order>\nB) ANSWER: <the answer to the question, with file path(s)>\nC) VERIFIED: <did the actual files confirm? yes/no + any surprise>\nD) FILES OPENED: <count and list — the orientation cost>",
+        "capabilities": "fs.read,shell"
+      },
+      "meta": { "description": "Orient — Haiku, cold agent, atlas-first, then verify against ground truth." }
+    },
+    {
+      "id": "notify",
+      "type": "agent:notify",
+      "timeoutMs": 180000,
+      "params": {
+        "agent": "{{params.agent}}",
+        "message": "🧭 atlas dogfood complete:\n\n{{nodes.orient.result.reply}}"
+      }
+    }
+  ],
+  "edges": [{ "from": "orient", "to": "notify" }]
+}

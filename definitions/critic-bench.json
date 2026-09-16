@@ -1,0 +1,76 @@
+{
+  "id": "critic-bench",
+  "name": "Critic bench — one prompt, every seat, harness held fixed",
+  "description": "Fans ONE byte-identical prompt out to every reviewer seat in parallel and returns each verdict for scoring. This is a MEASUREMENT rig, not a review workflow: nothing here gates anything, and no node reads another's output, so a slow or dead seat cannot bias or block the rest. The `prompt` param is composed by the CALLER — that is deliberate, because the harness variable we most want to A/B (do skill preambles like skills/claims_carry.md + skills/fluency_is.md change a seat's verdict?) then becomes a param change rather than a definition change, and the definition stays a fixed control. Per Harness-Bench a score belongs to a model+harness PAIR, so never compare a run of this against a run whose prompt was composed differently. TWO GROK CELLS, ONE GATED: `grok-complete` is model:generate tier grok-fast (xai HTTP completion, model grok-4.5 — same harness class as haiku/sonnet/ornith/gemma); `grok` is agent:run runtime:grok (agentic scaffold, SAME weights). Comparing those two legs is the within-model HARNESS finding; comparing grok-complete to the other four is the CAPABILITY finding. The agentic cell is OFF BY DEFAULT — it runs only when the caller passes `runAgentic: true`, because it has never converged on this task shape and an 11-minute DNF blocks replication runs. It is GATED, NOT DELETED: deleting it removes the only within-model harness contrast in the bench, which is an experiment, not a seat. The evidence against it is THINNER than a previous revision of this description claimed (\"3 for 3\"): the run store shows ONE in-runtime DNF (wxi8lz, timed_out after 660000ms) and ONE cell that never ran at all (oye8au, status `pending`); the third alleged failure was a raw spawn outside the runtime killed by the driver's own 10-minute tool cap — the bench harness failing, not the seat. Treat agentic-grok as 1-2 observations on ONE task shape: unconverged, NOT settled. `agentic-gate` is a core:noop root so the cell can be gated WITHOUT hanging it off another seat — the no-seat-blocks-or-biases-another property is the whole rig. TIMEOUTS: local seats get an hour — they are free, serial, and reasoning models spend many multiples of their answer in reasoning_content before emitting a word. BUDGET IS NOT HEADROOM, IT IS A TARGET: raising localMaxTokens 32768 -> 65536 made gemma and ornith WORSE (176,890 and 249,904 chars of reasoning, neither emitting an answer) when both had answered correctly at the lower budget. Run at the budget that produces answers, and treat these seats as HIGH VARIANCE — one run per cell is not a measurement.",
+  "nodes": [
+    {
+      "id": "gemma",
+      "type": "model:generate",
+      "timeoutMs": 3600000,
+      "params": {
+        "tier": "local-review",
+        "prompt": "{{params.prompt}}",
+        "maxTokens": "{{params.localMaxTokens}}"
+      }
+    },
+    {
+      "id": "ornith",
+      "type": "model:generate",
+      "timeoutMs": 3600000,
+      "params": {
+        "tier": "ornith-review",
+        "prompt": "{{params.prompt}}",
+        "maxTokens": "{{params.localMaxTokens}}"
+      }
+    },
+    {
+      "id": "haiku",
+      "type": "model:generate",
+      "timeoutMs": 600000,
+      "params": {
+        "tier": "cheap",
+        "prompt": "{{params.prompt}}",
+        "maxTokens": "{{params.apiMaxTokens}}"
+      }
+    },
+    {
+      "id": "sonnet",
+      "type": "model:generate",
+      "timeoutMs": 600000,
+      "params": {
+        "tier": "sonnet5",
+        "prompt": "{{params.prompt}}",
+        "maxTokens": "{{params.apiMaxTokens}}"
+      }
+    },
+    {
+      "id": "agentic-gate",
+      "type": "core:noop",
+      "params": {}
+    },
+    {
+      "id": "grok",
+      "type": "agent:run",
+      "timeoutMs": 660000,
+      "params": {
+        "runtime": "grok",
+        "prompt": "{{params.prompt}}",
+        "cwd": "{{params.cwd}}",
+        "capabilities": "fs.read"
+      }
+    },
+    {
+      "id": "grok-complete",
+      "type": "model:generate",
+      "timeoutMs": 600000,
+      "params": {
+        "tier": "grok-fast",
+        "prompt": "{{params.prompt}}",
+        "maxTokens": "{{params.apiMaxTokens}}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "agentic-gate", "to": "grok", "condition": "params.runAgentic === true" }
+  ]
+}
